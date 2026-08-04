@@ -431,3 +431,192 @@ export async function collectAnnouncements(page: Page): Promise<void> {
     });
   });
 }
+
+/* ════════════════════════════════════════════════════════════════════════ the operator's side ═╗
+ *
+ * PHASES 5 AND 6 NEED A COUNTERPARTY, AND IT MUST NOT BE THE WALLET.
+ *
+ * §5.1 excludes market creation from this wallet deliberately — it is oracle role, category
+ * curation, house seed and approval, and "putting it behind a self-custody key would either
+ * duplicate it badly or grant powers the key was never meant to carry". So the tests need somebody
+ * ELSE to deploy a market and to resolve it, and that somebody is this section: a plain signer
+ * driven by the test, playing the operator that micro-foresight plays in production.
+ *
+ * Everything below therefore signs with the NODE'S OWN COINBASE KEY, read off disk, and none of it
+ * runs inside the extension. The wallet's part of every test is only ever: read, stake, claim,
+ * deploy a token. If a helper here ever grows into something the extension calls, the exclusion has
+ * been broken.
+ *
+ * The key is read, never written, never logged and never committed — `coinbase-key.json` lives in
+ * the node's data directory and this is a local testnet whose coins have no price.
+ * ╚═══════════════════════════════════════════════════════════════════════════════════════════════*/
+
+import { readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import {
+  fromHex, signTransaction, toChecksumAddress, keccak256, toHex as coreToHex,
+} from '@cloudsforge/hearth-wallet-core';
+
+const CHAIN: { id: number; name: string; network: string; currency: { name: string; symbol: string; decimals: number }; supportsEip1559: boolean } = {
+  id: CHAIN_ID,
+  name: 'Hearth Testnet',
+  network: 'hearth-testnet',
+  currency: { name: 'Ember', symbol: 'EMBER', decimals: 18 },
+  // Hearth v1 has no base fee. The core derives this from three assertions in the node's source.
+  supportsEip1559: false,
+};
+
+export interface Signer {
+  readonly address: string;
+  readonly key: Uint8Array;
+}
+
+/**
+ * The funded account these tests spend from: the mining node's coinbase, read from its data
+ * directory.
+ *
+ * WHY NOT A FAUCET OR A PREMINE. Hearth's genesis says "NO PREMINE" in terms, so on any Hearth
+ * chain — this laptop's or CI's fresh one — the only account with a balance is a coinbase. Asking
+ * micro-faucet would put a CloudsForge service in the path of a suite whose entire subject is that
+ * no CloudsForge service is in the path.
+ *
+ * FAILS with a message naming what to start rather than skipping. A phase-5 suite that cannot spend
+ * cannot prove anything, and one that quietly passes without spending is worse than none.
+ */
+export function fundedSigner(): Signer {
+  const candidates = [
+    process.env['HEARTH_COINBASE_KEY'],
+    process.env['HEARTH_DATA'] === undefined ? undefined : join(process.env['HEARTH_DATA'], 'coinbase-key.json'),
+    join(homedir(), '.cloudsforge', 'ember-testnet', 'miner', 'coinbase-key.json'),
+  ].filter((p): p is string => p !== undefined);
+
+  const found = candidates.find((p) => existsSync(p));
+  if (found === undefined) {
+    throw new Error(
+      'These tests stake and deploy, so they need an account with a balance, and on a Hearth chain '
+      + '(genesis.js: "NO PREMINE") that is a miner\'s coinbase. Looked for its key in:\n  '
+      + `${candidates.join('\n  ')}\n`
+      + 'Set HEARTH_DATA to the node\'s data directory, or HEARTH_COINBASE_KEY to the file.',
+    );
+  }
+  const parsed = JSON.parse(readFileSync(found, 'utf8')) as { address?: string; privateKey?: string };
+  if (typeof parsed.privateKey !== 'string' || typeof parsed.address !== 'string') {
+    throw new Error(`${found} is not a Hearth coinbase key file`);
+  }
+  return { address: toChecksumAddress(parsed.address), key: fromHex(parsed.privateKey) };
+}
+
+/** The next nonce for an address, from `pending` — the same tag the wallet uses, for the same reason. */
+export async function nonceOf(address: string): Promise<bigint> {
+  return BigInt(String(await nodeRpc('eth_getTransactionCount', [address, 'pending'])));
+}
+
+/**
+ * Sign and broadcast, as the operator. Legacy type 0, because Hearth has no base fee.
+ *
+ * The hash is DERIVED from the signed bytes rather than taken from the node's answer, and then the
+ * two are compared. A node that echoes a different hash from the one the bytes have is a node whose
+ * answers cannot be used to poll for a receipt — micro-mint's `evmTxHash` exists for the same
+ * reason (`mint/src/evm.ts:150`).
+ */
+export async function operatorSend(
+  signer: Signer,
+  tx: { to: string | null; value?: bigint; data?: string; gas?: bigint },
+): Promise<string> {
+  const [nonce, gasPriceHex] = await Promise.all([nonceOf(signer.address), nodeRpc('eth_gasPrice')]);
+  const gasPrice = BigInt(String(gasPriceHex));
+  const signed = signTransaction({
+    type: 0,
+    nonce,
+    gasPrice,
+    gasLimit: tx.gas ?? 3_000_000n,
+    to: tx.to,
+    value: tx.value ?? 0n,
+    data: tx.data ?? '0x',
+  }, signer.key, CHAIN);
+
+  const derived = coreToHex(keccak256(fromHex(signed.raw)));
+  const hash = String(await nodeRpc('eth_sendRawTransaction', [signed.raw]));
+  if (hash.toLowerCase() !== derived.toLowerCase()) {
+    throw new Error(`the node called this transaction ${hash} but its bytes hash to ${derived}`);
+  }
+  return hash;
+}
+
+export interface Receipt {
+  readonly status: number;
+  readonly contractAddress: string | null;
+  readonly blockNumber: number;
+  readonly gasUsed: bigint;
+}
+
+/**
+ * Wait for a receipt, and INSIST ON `status === 1`.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ * A MINED TRANSACTION IS NOT A SUCCESSFUL ONE. A call that reverts is mined, gets a receipt, gets a
+ * block number, and burns the gas — with `status: 0`. Every "did it work" question in this suite
+ * goes through here rather than through "did an error appear on screen", because the phase-2 agent
+ * measured that this node's refusals are byte-identical for different causes. An absence of error
+ * is not evidence; a status word is.
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ */
+export async function waitForReceipt(hash: string, timeoutMs = 90_000): Promise<Receipt> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    const raw = await nodeRpc('eth_getTransactionReceipt', [hash]);
+    if (raw !== null && typeof raw === 'object') {
+      const r = raw as Record<string, unknown>;
+      const status = Number(BigInt(String(r['status'] ?? '0x0')));
+      const receipt: Receipt = {
+        status,
+        contractAddress: typeof r['contractAddress'] === 'string' ? r['contractAddress'] : null,
+        blockNumber: Number(BigInt(String(r['blockNumber'] ?? '0x0'))),
+        gasUsed: BigInt(String(r['gasUsed'] ?? '0x0')),
+      };
+      if (status !== 1) {
+        throw new Error(
+          `${hash} was mined in block ${receipt.blockNumber} with status ${status} — it REVERTED. `
+          + `${receipt.gasUsed} gas was burned. A receipt is not a success.`,
+        );
+      }
+      return receipt;
+    }
+    await new Promise((done) => setTimeout(done, 700));
+  }
+  throw new Error(`${hash} was not mined within ${timeoutMs}ms`);
+}
+
+/** Read a contract, as the TEST — the independent witness for everything the wallet claims. */
+export async function callContract(to: string, data: string, blockTag = 'latest'): Promise<string> {
+  return String(await nodeRpc('eth_call', [{ to, data }, blockTag]));
+}
+
+/* ------------------------------------------------------- micro-foresight's committed contract - */
+
+/**
+ * `ForesightMarket`'s creation bytecode, read out of the sibling micro-foresight checkout.
+ *
+ * NOT COPIED INTO THIS REPOSITORY. The wallet does not deploy markets and must not carry the
+ * bytecode to do it with; only the test needs it, and only to create something to stake in. It is a
+ * PUBLIC repository, so CI clones it without a secret, and this FAILS rather than skipping when it
+ * is absent.
+ */
+export function foresightMarketBytecode(): string {
+  const candidates = [
+    process.env['FORESIGHT_SRC'] === undefined ? null : join(process.env['FORESIGHT_SRC'], 'contracts', 'generated.ts'),
+    resolve(REPO, '..', 'foresight', 'src', 'contracts', 'generated.ts'),
+  ].filter((p): p is string => p !== null);
+  const found = candidates.find((p) => existsSync(p));
+  if (found === undefined) {
+    throw new Error(
+      'The Foresight suite needs micro-foresight beside this checkout for ForesightMarket\'s committed '
+      + `bytecode — it deploys a real market to stake in. Looked in:\n  ${candidates.join('\n  ')}\n`
+      + 'micro-foresight is PUBLIC; clone it as `foresight`, or set FORESIGHT_SRC.',
+    );
+  }
+  const source = readFileSync(found, 'utf8');
+  const match = /^export const FORESIGHTMARKET_BYTECODE =\s*\n\s*'(0x[0-9a-fA-F]+)'$/m.exec(source);
+  if (match === null) throw new Error(`${found} has no FORESIGHTMARKET_BYTECODE in the expected shape`);
+  return match[1]!;
+}

@@ -57,6 +57,8 @@ export interface WalletState {
     autoLockMinutes: number;
     seedBackedUp: boolean;
     onboarded: boolean;
+    /** null — off — is the shipped default. See background/discovery.ts. */
+    foresightApiUrl: string | null;
   };
   chains: ChainRecordView[];
   permissions: { origin: string; accounts: string[]; grantedAt: number }[];

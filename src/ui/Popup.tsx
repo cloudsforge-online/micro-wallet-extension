@@ -10,8 +10,22 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { call, getState, type WalletState } from './client.ts';
 import { formatGwei, formatUnits, parseUnits, shortAddress } from '../shared/units.ts';
 import { encodeQr, qrToSvg } from '../shared/qr.ts';
+import { Markets } from './Markets.tsx';
+import { Deploy } from './Deploy.tsx';
 
-type Tab = 'assets' | 'activity' | 'send' | 'receive' | 'connections' | 'settings';
+type Tab = 'assets' | 'activity' | 'send' | 'receive' | 'markets' | 'deploy' | 'connections' | 'settings';
+
+/** The tab labels. `markets` and `deploy` are named for what they do, not for the product. */
+const TAB_LABELS: Readonly<Record<Tab, string>> = Object.freeze({
+  assets: 'Balance',
+  activity: 'Activity',
+  send: 'Send',
+  receive: 'Receive',
+  markets: 'Markets',
+  deploy: 'Deploy',
+  connections: 'Connections',
+  settings: 'Settings',
+});
 
 export function Popup(): React.JSX.Element {
   const [state, setState] = useState<WalletState | null>(null);
@@ -75,9 +89,9 @@ export function Popup(): React.JSX.Element {
       ) : null}
 
       <div className="tabs" role="tablist" style={{ marginTop: 12 }}>
-        {(['assets', 'activity', 'send', 'receive', 'connections', 'settings'] as const).map((t) => (
+        {(Object.keys(TAB_LABELS) as Tab[]).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t} data-testid={`tab-${t}`} onClick={() => setTab(t)}>
-            {t === 'assets' ? 'Balance' : t[0]!.toUpperCase() + t.slice(1)}
+            {TAB_LABELS[t]}
           </button>
         ))}
       </div>
@@ -86,6 +100,8 @@ export function Popup(): React.JSX.Element {
       {tab === 'activity' ? <Activity address={account.address} chain={chain} /> : null}
       {tab === 'send' ? <Send from={account.address} chain={chain} /> : null}
       {tab === 'receive' ? <Receive address={account.address} chain={chain} /> : null}
+      {tab === 'markets' ? <Markets chain={chain} address={account.address} /> : null}
+      {tab === 'deploy' ? <Deploy chain={chain} address={account.address} /> : null}
       {tab === 'connections' ? <Connections state={state} onChanged={refresh} /> : null}
       {tab === 'settings' ? <SettingsPane state={state} onChanged={refresh} /> : null}
     </main>
@@ -365,6 +381,7 @@ function SettingsPane(props: { state: WalletState; onChanged: () => Promise<void
   const [held, setHeld] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [privateKey, setPrivateKey] = useState('');
+  const [discoveryUrl, setDiscoveryUrl] = useState(props.state.settings.foresightApiUrl ?? '');
 
   return (
     <div>
@@ -425,6 +442,30 @@ function SettingsPane(props: { state: WalletState; onChanged: () => Promise<void
         </>
       )}
       {error !== null ? <p className="error">{error}</p> : null}
+
+      <h2>Market discovery</h2>
+      {/* OFF by default, and the copy says what turning it on does and does NOT do. §5.1: discovery
+          is a convenience; custody is not. */}
+      <input
+        className="mono"
+        data-testid="discovery-url"
+        spellCheck={false}
+        placeholder="https://… a Foresight directory, or blank for none"
+        value={discoveryUrl}
+        onChange={(e) => setDiscoveryUrl(e.target.value)}
+      />
+      <button className="wide" style={{ marginTop: 6 }} data-testid="discovery-save" onClick={() => {
+        setError(null);
+        void call('setDiscovery', { url: discoveryUrl.trim() === '' ? null : discoveryUrl.trim() })
+          .then(() => props.onChanged())
+          .catch((cause: unknown) => setError(cause instanceof Error ? cause.message : String(cause)));
+      }}>Save</button>
+      <p className="muted">
+        Off unless you fill this in, and off is the default. A directory can list which markets exist
+        and what each one asks; it is never asked for a pool, a position or a payout, because those
+        come from the contract. Leaving it blank costs you a list and nothing else — you can still
+        paste a market’s address, see what you hold and claim it.
+      </p>
 
       <h2>About</h2>
       <p className="muted">

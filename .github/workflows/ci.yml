@@ -50,7 +50,19 @@ jobs:
           repository: cloudsforge-online/micro-hearth-wallet-core
           path: hearth-wallet-core
 
-      # `package_json_file` IS REQUIRED because this job checks out TWO repositories side by side,
+      # micro-mint, because phase 6's templates ARE micro-mint's and this repository has to prove it
+      # rather than assert it. test/abi.test.ts holds the wallet's ABI encoder against mint's own
+      # `encodeConstructorArgs` — two independent implementations, one of which has been deploying
+      # real tokens — and test/templates.test.ts re-runs tools/templates.js and diffs the committed
+      # artefacts. BOTH FAIL WHEN IT IS ABSENT rather than skipping, which is why it is checked out
+      # here and not treated as optional. It is PUBLIC, so no secret is involved; that is also why
+      # the copy in src/background/templates.generated.ts can be checked at all.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-mint
+          path: mint
+
+      # `package_json_file` IS REQUIRED because this job checks out SEVERAL repositories side by side,
       # so the workspace root — where the action looks by default — holds no package.json at all.
       # Left off, it fails with "No pnpm version is specified".
       - uses: pnpm/action-setup@v4
@@ -67,6 +79,15 @@ jobs:
       - run: pnpm typecheck
         working-directory: wallet-extension
 
+      # Before anything else that could mask it: is the committed copy of micro-mint's bytecode
+      # still what micro-mint says it should be? A drifted copy is a wallet deploying a contract
+      # the platform no longer deploys, and §5's "one audited set rather than two" is then false.
+      - name: The token templates are still micro-mint's
+        working-directory: wallet-extension
+        env:
+          MINT_SRC: ${{ github.workspace }}/mint/src
+        run: pnpm templates:check
+
       # Both targets. `pnpm build:all` is what proves "one source, two manifests" is still true —
       # test/bundle.test.ts then asserts the two builds' JavaScript is byte-identical.
       - run: pnpm build:all
@@ -74,6 +95,8 @@ jobs:
 
       - run: pnpm test
         working-directory: wallet-extension
+        env:
+          MINT_SRC: ${{ github.workspace }}/mint/src
 
       - name: Report what the icons came from
         working-directory: wallet-extension
@@ -108,6 +131,21 @@ jobs:
         with:
           repository: cloudsforge-online/hearth
           path: hearth
+
+      # micro-foresight, for `ForesightMarket`'s committed creation bytecode. The Foresight suite
+      # DEPLOYS A REAL MARKET to stake in, because a phase whose whole property is "a position
+      # survives the platform" cannot be proved against a market somebody else has to have created
+      # first. The bytecode is deliberately NOT copied into this repository: the wallet does not
+      # create markets (§5.1 excludes it), so it must not carry the means to.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-foresight
+          path: foresight
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-mint
+          path: mint
 
       - uses: pnpm/action-setup@v4
         with: { package_json_file: wallet-extension/package.json }
@@ -166,10 +204,18 @@ jobs:
           cat "$RUNNER_TEMP/hearth.log"
           exit 1
 
+      # `HEARTH_DATA` is how test/e2e/harness.ts finds the node's coinbase key. Phases 5 and 6 SPEND
+      # — a stake is a payable call and a deployment costs gas — and Hearth's genesis says "NO
+      # PREMINE" in terms, so the only funded account on any Hearth chain is a miner's coinbase.
+      # Asking micro-faucet instead would put a CloudsForge service in the path of a suite whose
+      # entire subject is that no CloudsForge service is in the path.
       - name: Drive the extension in a real browser
         working-directory: wallet-extension
         env:
           HEARTH_NODE_SRC: ${{ github.workspace }}/hearth/node/src
+          HEARTH_DATA: ${{ runner.temp }}/hearth-data
+          FORESIGHT_SRC: ${{ github.workspace }}/foresight/src
+          MINT_SRC: ${{ github.workspace }}/mint/src
         run: pnpm test:e2e
 
       - name: The node's log, whatever happened

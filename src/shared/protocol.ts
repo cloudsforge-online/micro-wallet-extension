@@ -25,6 +25,8 @@
  * from storage, whether it was the same worker or a fresh one. See background/requests.ts.
  */
 
+import type { MarketObservation, StakeProjection } from './foresight.ts';
+
 export const CHANNEL = 'cloudsforge-wallet';
 
 /** rdns for EIP-6963. Must be stable forever: a dapp remembers the wallet the user picked by it. */
@@ -135,6 +137,22 @@ export interface TransactionPreview {
   /** The decoded call — never null in the UI's eyes; an unrecognised call decodes to 'unknown'. */
   readonly decoded: DecodedCall;
   readonly warnings: readonly Warning[];
+  /**
+   * For a `stake(uint8)` call: the market as one node reported it at the block named inside, read
+   * AT PREVIEW TIME — §5.1's "odds are read at signing time and shown as they were".
+   *
+   * `null` for every other call, and also for a stake whose market could not be read: a
+   * confirmation screen that silently omits the pool is better than one that invents it, and the
+   * UI says which of the two happened. It is deliberately not a number pair — the whole
+   * observation travels, so the screen can name the block it came from.
+   */
+  readonly foresight: ForesightPreview | null;
+}
+
+/** The parimutuel facts a confirmation screen needs, and the projection it may show beside them. */
+export interface ForesightPreview {
+  readonly observation: MarketObservation;
+  readonly projection: StakeProjection;
 }
 
 export interface Warning {

@@ -19,16 +19,16 @@
  * contract a user is about to interact with to a third party, and §7 says analytics see nothing.
  */
 
-import { keccak256, toChecksumAddress, toHex } from '@cloudsforge/hearth-wallet-core';
+import { toChecksumAddress, toHex } from '@cloudsforge/hearth-wallet-core';
 import type { DecodedCall, Warning } from './protocol.ts';
 import { formatUnits } from './units.ts';
+// One implementation of selector derivation, in shared/abi.ts, which is also the encode half of the
+// byte layout this file decodes. Two copies of "the first four bytes of keccak256 of the signature"
+// is two chances to get one of them subtly wrong, and the symptom would be a screen that decodes
+// a call the wallet then encodes differently.
+import { selectorOf } from './abi.ts';
 
-const encoder = new TextEncoder();
-
-/** The first four bytes of keccak256 of the canonical signature, as `0x…`. */
-export function selectorOf(signature: string): string {
-  return toHex(keccak256(encoder.encode(signature)).subarray(0, 4));
-}
+export { selectorOf };
 
 /**
  * The maximum uint256.

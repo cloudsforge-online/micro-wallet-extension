@@ -84,6 +84,43 @@ export interface Settings {
   /** Set once the user has confirmed they wrote the phrase down. */
   readonly seedBackedUp: boolean;
   readonly onboarded: boolean;
+  /**
+   * Where to ask which prediction markets exist. `null` — OFF — is the shipped default.
+   *
+   * §5.1: "Discovery is a convenience; custody is not." The wallet reads positions, stakes and
+   * claims entirely from the contract, so this endpoint is a directory and nothing more; see
+   * background/discovery.ts for the two fields it is allowed to contribute. Defaulting it to null
+   * means the absent-API path is the one every user is on rather than a fallback nobody exercises.
+   */
+  readonly foresightApiUrl: string | null;
+}
+
+/**
+ * A market the user has pasted in, kept so they do not have to paste it twice.
+ *
+ * THE ADDRESS IS THE ONLY THING THAT MATTERS HERE. `label` is whatever the user or a directory
+ * called it and is never used to decide anything; the pools, the odds and the position are read
+ * from the contract at the address every time the screen is drawn.
+ */
+export interface WatchedMarket {
+  readonly address: string;
+  readonly label: string;
+  readonly addedAt: number;
+  /** 'pasted' or the origin of the directory that suggested it, so the UI can say where it came from. */
+  readonly source: string;
+}
+
+/** A contract this wallet deployed, remembered so the user can find it again. */
+export interface DeployedToken {
+  readonly address: string;
+  readonly chainId: number;
+  readonly contract: string;
+  readonly symbol: string;
+  readonly name: string;
+  readonly decimals: number;
+  readonly deployedBy: string;
+  readonly txHash: string;
+  readonly at: number;
 }
 
 export interface LocalShape {
@@ -93,6 +130,8 @@ export interface LocalShape {
   permissions: OriginPermission[];
   settings: Settings;
   addressBook: { address: string; label: string }[];
+  markets: WatchedMarket[];
+  tokens: DeployedToken[];
 }
 
 /** What an unlock puts in `session`, and the only place a mnemonic ever is outside the vault. */
@@ -117,6 +156,9 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
   autoLockMinutes: 15,
   seedBackedUp: false,
   onboarded: false,
+  // OFF. See the field's comment: this is the default so that "the Foresight API is absent" is the
+  // path every user takes, not the one nobody has walked.
+  foresightApiUrl: null,
 });
 
 /**
@@ -156,14 +198,33 @@ const LOCAL_DEFAULTS: LocalShape = {
   permissions: [],
   settings: DEFAULT_SETTINGS,
   addressBook: [],
+  markets: [],
+  tokens: [],
 };
 
 const SESSION_DEFAULTS: SessionShape = { unlock: null, requests: {}, outcomes: {} };
 
+/**
+ * Read a key, with the settings record MERGED over its defaults.
+ *
+ * The merge is a migration, and it is needed the moment a release adds a settings field. A wallet
+ * installed before `foresightApiUrl` existed has a stored `settings` object without it, and
+ * `getLocal('settings')` returns that object verbatim — so the new field reads as `undefined`
+ * rather than as its default, and every `settings.foresightApiUrl === null` check in the codebase
+ * quietly answers false for exactly the users who have been here longest. Spreading the defaults
+ * underneath costs one object per read and removes the whole class.
+ *
+ * Only `settings`, deliberately: the array-valued keys have `[]` as their default and a merge would
+ * be meaningless, and `vault` must stay exactly what was written or it is not a vault.
+ */
 export async function getLocal<K extends keyof LocalShape>(key: K): Promise<LocalShape[K]> {
   const got = await chrome.storage.local.get(key);
   const value = (got as Partial<LocalShape>)[key];
-  return value === undefined ? LOCAL_DEFAULTS[key] : value;
+  if (value === undefined) return LOCAL_DEFAULTS[key];
+  if (key === 'settings') {
+    return { ...DEFAULT_SETTINGS, ...(value as Settings) } as LocalShape[K];
+  }
+  return value;
 }
 
 export async function setLocal<K extends keyof LocalShape>(key: K, value: LocalShape[K]): Promise<void> {

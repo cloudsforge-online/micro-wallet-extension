@@ -32,6 +32,7 @@ import {
   newMnemonic, revealMnemonic, signMessage, signTx, signTyped, unlockVault,
 } from './vault.ts';
 import { getBalance, getBlockNumber, getGasPrice, recentHistory, sendRaw } from './rpc.ts';
+import * as features from './features.ts';
 
 /* --------------------------------------------------------------------------- live connections -- */
 
@@ -314,6 +315,29 @@ async function handleUi(action: string, payload: unknown, sender?: chrome.runtim
       await touchSession();
       return { hash: await sendRaw(chain, signed), raw: signed };
     }
+
+    /* ---------------------------------------------------- phase 5: Foresight, from the chain -- */
+    //
+    // Not one of these reaches a CloudsForge service except `discoverMarkets`, which is off unless
+    // the user turns it on and contributes an address and a question and nothing else. §5.1: if
+    // every service here were switched off, every action below still works.
+    case 'market': return features.market(p['address']);
+    case 'previewStake': return features.previewStake(p);
+    case 'stake': return features.stake(p);
+    case 'previewClaim': return features.previewClaim(p);
+    case 'claim': return features.claim(p);
+    case 'watchedMarkets': return getLocal('markets');
+    case 'watchMarket': return features.watchMarket(p);
+    case 'unwatchMarket': return features.unwatchMarket(p);
+    case 'discoverMarkets': return features.discovery();
+    case 'setDiscovery': return features.setDiscovery(p);
+
+    /* ------------------------------------------- phase 6: token deployment, signed locally ---- */
+    case 'tokenTemplates': return features.templates();
+    case 'previewDeploy': return features.previewDeploy(p);
+    case 'deployToken': return features.deployToken(p);
+    case 'readToken': return features.token(p);
+    case 'deployedTokens': return getLocal('tokens');
 
     case 'getRequest': {
       const id = String(p['id']);

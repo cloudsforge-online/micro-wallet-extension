@@ -23,6 +23,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { call } from './client.ts';
 import type { PendingRequest, RequestPreview, TransactionPreview } from '../shared/protocol.ts';
 import { formatGwei, formatUnits } from '../shared/units.ts';
+import { formatBps, outcomeName } from '../shared/foresight.ts';
 
 export function Approval(): React.JSX.Element {
   const id = decodeURIComponent(window.location.hash.replace(/^#/, ''));
@@ -228,6 +229,11 @@ function TransactionBody(props: { tx: TransactionPreview; busy: boolean; onDecid
         </div>
       ))}
 
+      {/* §5.1's requirement, on the DAPP path. The pool was read by the worker when this window was
+          built — signing time — and is stated as observed, with its block. A page can display
+          whatever odds it likes; this panel is the wallet's own reading of the contract. */}
+      {props.tx.foresight !== null ? <ForesightBody foresight={props.tx.foresight} /> : null}
+
       <div className="panel" style={{ marginTop: 10 }}>
         <Decoded tx={props.tx} />
         <hr />
@@ -271,6 +277,44 @@ function TransactionBody(props: { tx: TransactionPreview; busy: boolean; onDecid
           {props.busy ? 'Signing…' : 'Confirm'}
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The parimutuel panel: what the pool was, at which block, and what the contract's own arithmetic
+ * gives this stake IF it settled at that instant.
+ *
+ * THE CAVEAT IS DRAWN FROM THE DATA, NOT TYPED HERE — `projection.caveat` is computed alongside the
+ * figure in shared/foresight.ts. A screen cannot render the number and forget the sentence, which
+ * is exactly how "a wallet that shows a fixed payout on a parimutuel" happens: not by anybody
+ * deciding to lie, but by somebody tidying a paragraph away from beside a number.
+ */
+function ForesightBody(props: { foresight: NonNullable<TransactionPreview['foresight']> }): React.JSX.Element {
+  const { observation: m, projection: p } = props.foresight;
+  return (
+    <div className="panel" style={{ marginTop: 10 }} data-testid="approval-foresight">
+      <strong>Staking on {outcomeName(p.outcome)} in a prediction market</strong>
+      <div className="row between" style={{ marginTop: 8 }}>
+        <span className="muted">Pool on YES</span>
+        <span data-testid="approval-pool-yes">{formatUnits(BigInt(m.poolYesWei), 18, 6)} EMBER · {formatBps(m.oddsYesBps)}</span>
+      </div>
+      <div className="row between" style={{ marginTop: 4 }}>
+        <span className="muted">Pool on NO</span>
+        <span data-testid="approval-pool-no">{formatUnits(BigInt(m.poolNoWei), 18, 6)} EMBER · {formatBps(m.oddsNoBps)}</span>
+      </div>
+      <hr />
+      <div className="row between">
+        <span className="muted">If it settled {outcomeName(p.outcome)} at this exact pool, your share would be</span>
+        <strong data-testid="approval-projection">{formatUnits(BigInt(p.shareIfResolvedNowWei), 18, 6)} EMBER</strong>
+      </div>
+      <div className="warn" style={{ marginTop: 10 }} data-testid="approval-caveat">
+        <strong>This is not a payout</strong>
+        <span>{p.caveat}</span>
+      </div>
+      <p className="muted" style={{ marginTop: 6 }} data-testid="approval-observed-block">
+        Read from {m.address} at block {m.blockNumber}, by this wallet, not by the page.
+      </p>
     </div>
   );
 }

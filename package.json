@@ -22,8 +22,11 @@
     "build:all": "node tools/build.js && node tools/build.js --target=firefox",
     "package": "node tools/package.js",
     "test": "node --import tsx --test test/*.test.ts",
-    "//test:e2e": "--test-concurrency=1 because each file launches its own Chromium with its own user-data directory and its own unpacked extension; run in parallel they contend for the same Hearth node's nonces and for the machine's memory. The timeout is generous because these tests wait on real block times, a real 600,000-iteration PBKDF2 unlock, and a real service-worker restart — none of which are worth making flaky to save a minute.",
-    "test:e2e": "node --import tsx --test --test-concurrency=1 --test-timeout=180000 test/e2e/*.test.ts",
+    "//test:e2e": "--test-concurrency=1 because each file launches its own Chromium with its own user-data directory and its own unpacked extension; run in parallel they contend for the same Hearth node's nonces and for the machine's memory. The timeout is generous because these tests wait on real block times, a real 600,000-iteration PBKDF2 unlock, and a real service-worker restart — none of which are worth making flaky to save a minute. 300s rather than 180s since phase 5: the Foresight suite waits for a real market to reach its close time before the oracle may resolve it, because ForesightMarket refuses to resolve an open market (:239) and that refusal is the rule that stops a resolver staking on the answer. Measured at 171s on the machine this was written on.",
+    "test:e2e": "node --import tsx --test --test-concurrency=1 --test-timeout=300000 test/e2e/*.test.ts",
+    "templates": "node tools/templates.js",
+    "//templates:check": "Fails when src/background/templates.generated.ts is not what micro-mint's committed artefacts produce. test/templates.test.ts asserts the same thing in-process; this is the form a human runs.",
+    "templates:check": "node tools/templates.js --check",
     "check": "pnpm typecheck && pnpm build:all && pnpm test"
   },
   "dependencies": {

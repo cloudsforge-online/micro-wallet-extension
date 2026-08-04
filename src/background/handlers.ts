@@ -17,13 +17,19 @@ import { bytesToUtf8, fromHex, toChecksumAddress } from '@cloudsforge/hearth-wal
 import {
   INVALID_PARAMS, ProviderError, UNAUTHORIZED, UNRECOGNISED_CHAIN, UNSUPPORTED_METHOD,
 } from '../shared/errors.ts';
-import type { PendingRequest, RequestPreview, TransactionPreview } from '../shared/protocol.ts';
+import type {
+  ForesightPreview, PendingRequest, RequestPreview, TransactionPreview, Warning,
+} from '../shared/protocol.ts';
 import { decodeCall, warningsFor } from '../shared/decode.ts';
+import {
+  MARKET_SELECTORS, PARIMUTUEL_CAVEAT, projectStake, type MarketObservation, type Outcome,
+} from '../shared/foresight.ts';
 import { fromQuantity, toQuantity } from '../shared/units.ts';
 import type { ChainRecord } from './storage.ts';
 import { getLocal, setLocal } from './storage.ts';
 import { isUnlocked, touchSession } from './session.ts';
 import { enqueue } from './requests.ts';
+import { readMarket } from './contracts.ts';
 import { estimateGas, getNonce, rpc } from './rpc.ts';
 
 /**
@@ -118,6 +124,31 @@ export async function previewTransaction(origin: string, raw: Record<string, unk
   const gasPrice = raw['gasPrice'] != null ? fromQuantity(raw['gasPrice'], 'gasPrice') : estimate.gasPrice;
   const decoded = decodeCall({ to, data, valueWei });
   const warnings = [...warningsFor(decoded, valueWei)];
+
+  // §5.1: "Odds are read at SIGNING TIME and shown as they were." This is signing time for the dapp
+  // path — the moment the confirmation window is built — so the pool is read here rather than
+  // trusted from whatever the page displayed. It is best-effort by construction: a market that
+  // cannot be read produces a warning saying so and a confirmation with no pool on it, never a
+  // confirmation that fails to open. Refusing to render is not safer than rendering "this wallet
+  // could not read the pool".
+  let foresight: ForesightPreview | null = null;
+  if (to !== null && isForesightStake(data)) {
+    try {
+      const outcome = stakedOutcome(data);
+      const observation = await readMarket(chain, to, from);
+      foresight = { observation, projection: projectStake(observation, outcome, valueWei) };
+      warnings.push(...foresightWarnings(observation, valueWei));
+    } catch (cause) {
+      warnings.push({
+        severity: 'caution',
+        title: 'This wallet could not read the market’s pool',
+        detail: `${to} did not answer the ForesightMarket views this screen would show: `
+          + `${cause instanceof Error ? cause.message : String(cause)}. `
+          + 'The call below still says stake(uint8), but nothing here can tell you what the pool is or what a share would be worth.',
+      });
+    }
+  }
+
   if (estimate.fellBack) {
     warnings.unshift({
       severity: 'danger',
@@ -137,7 +168,61 @@ export async function previewTransaction(origin: string, raw: Record<string, unk
     nonce: (raw['nonce'] != null ? fromQuantity(raw['nonce'], 'nonce') : nonce).toString(),
     decoded,
     warnings,
+    foresight,
   };
+}
+
+/** Is this call data a `stake(uint8)`? Selector plus exactly one argument word, and nothing else. */
+function isForesightStake(data: string): boolean {
+  return data.length === 2 + 8 + 64 && data.toLowerCase().startsWith(MARKET_SELECTORS.stake.toLowerCase());
+}
+
+/** The outcome argument of a `stake(uint8)`, refusing anything the contract would refuse. */
+function stakedOutcome(data: string): Outcome {
+  const value = BigInt(`0x${data.slice(10)}`);
+  if (value !== 0n && value !== 1n) {
+    // ForesightMarket reverts with BadOutcome above OUTCOME_NO (:201). Saying so here means the
+    // preview does not have to invent a name for outcome 7.
+    throw new ProviderError(INVALID_PARAMS, `stake(${value}) — this market only has outcomes 0 (YES) and 1 (NO), and the contract reverts on anything else.`);
+  }
+  return Number(value) as Outcome;
+}
+
+/**
+ * The warnings a stake screen owes the user, all of them about the contract's own rules.
+ *
+ * None of these is a judgement about whether the bet is a good one. They are the four states in
+ * which pressing Confirm costs a fee and achieves nothing, plus the one sentence about parimutuel
+ * odds that §5.1 requires be said rather than implied.
+ */
+function foresightWarnings(m: MarketObservation, valueWei: bigint): Warning[] {
+  const out: Warning[] = [];
+  if (m.status !== 'open') {
+    out.push({
+      severity: 'danger',
+      title: `This market is ${m.status}, so a stake will revert`,
+      detail: `status() answered ${m.status} at block ${m.blockNumber}. ForesightMarket refuses a stake unless it is open, so this transaction fails and still costs the fee.`,
+    });
+  } else if (m.blockTimestamp >= m.closeTime) {
+    out.push({
+      severity: 'danger',
+      title: 'This market has closed, so a stake will revert',
+      detail: `The contract closes at ${new Date(m.closeTime * 1000).toISOString()} and the chain’s own clock — the timestamp of block ${m.blockNumber} — is already past it.`,
+    });
+  }
+  if (valueWei === 0n) {
+    out.push({
+      severity: 'danger',
+      title: 'A stake of zero reverts',
+      detail: 'ForesightMarket refuses a zero stake rather than accepting it silently. This transaction fails and still costs the fee.',
+    });
+  }
+  out.push({
+    severity: 'caution',
+    title: 'These odds are not the odds you will settle at',
+    detail: PARIMUTUEL_CAVEAT,
+  });
+  return out;
 }
 
 export interface DispatchContext {

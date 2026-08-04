@@ -53,6 +53,50 @@ cannot creep in and quietly turn one listing into a different product.
 | **Dapps** | EIP-1193 provider, EIP-6963 discovery, EIP-3085/3326 add and switch chain, `personal_sign`, `eth_signTypedData_v4` |
 | **Confirmations** | The call is decoded, not shown as hex. Unlimited-approval warnings. The origin is named in full |
 | **Safety** | Verified seed backup, a reveal that takes three deliberate steps, auto-lock on a `chrome.alarms` alarm, and a promise that the wallet never asks for the phrase again |
+| **Markets** | Read a Foresight position, stake and claim — all from the contract, with no CloudsForge service involved |
+| **Deploy** | micro-mint's audited token templates, signed by your key: constructor arguments and cost shown, address predicted before sending |
+
+### Prediction markets, without the platform
+
+`ForesightMarket.sol`'s staking path is permissionless — `stake(uint8)` is payable, `claim()` pays
+whoever calls it, and there is no allowlist, no operator and no platform signature in either. So the
+wallet reads `stakeOf`, `payoutOf`, `oddsBps`, `pool` and `total` **straight off the contract** and
+signs the two calls locally.
+
+**Positions survive the platform.** If every CloudsForge service were switched off, a holder could
+still see their stake and still claim it. That is only true if the wallet never routes these calls
+through the platform, so it does not: `foresightApiUrl` is **`null` by default**, which means the
+shipped build talks to nothing but a Hearth node. A directory is optional, contributes exactly two
+strings — a contract address and a question — and is never asked for a pool, a position or a payout.
+`test/e2e/foresight.test.ts` points discovery at a genuinely dead port and drives the whole
+read-stake-claim flow to completion, because a dependency whose absence you never exercise is a
+dependency you have.
+
+**Odds are read at signing time and shown as they were.** A parimutuel's odds move with every stake
+including your own, so the confirmation states the pool *as observed*, names the block it was read
+at, and calls the figure a share *if it settled at this instant* rather than a payout. The sentence
+that says so is a field on the projection rather than a string in a component, so a screen cannot
+render the number and drop the caveat.
+
+**Creating a market is deliberately absent.** It involves the oracle role, category curation, the
+house seed and approvals — operator machinery — and putting it behind a self-custody key would
+either duplicate it badly or grant powers the key was never meant to carry.
+
+### Token deployment
+
+The templates are **micro-mint's**, not a second set: `tools/templates.js` copies the committed
+OpenZeppelin bytecode out of `micro-mint/src/contracts/generated.ts`, and `test/templates.test.ts`
+re-runs the generator against the sibling checkout and diffs the result. A hand edit here and a
+change in micro-mint without a regeneration are the same red build. The three variants are mint's
+closed union — `fixed`, `mintable`, `foundry` — and the constructor argument order is asserted
+against mint's own ABI, because mint says of that order that it is "load-bearing and unchecked by
+the compiler".
+
+The confirmation shows the constructor arguments under micro-mint's own parameter names, the supply
+in both whole tokens and base units so the conversion is checkable rather than trusted, the
+deployment cost, and the address the contract will land at — derived from sender and nonce before
+anything is sent. Afterwards the wallet reads the contract back and says nothing until `eth_getCode`
+and `symbol()` both answer, because a receipt naming an address is not proof of a contract.
 
 ## The signing core is not in this repository
 
@@ -118,15 +162,34 @@ node**, and if the node is not running it fails rather than skipping.
 
 | Suite | What it is |
 | --- | --- |
-| `pnpm test` | Units: the QR encoder round-tripped through an independent decoder, call decoding, money arithmetic, and guards on the built package |
+| `pnpm test` | Units: the QR encoder round-tripped through an independent decoder, call decoding, money arithmetic, the ABI coder against micro-mint's, the parimutuel arithmetic against a second transcription of the Solidity, and guards on the built package |
 | `test/e2e/wallet.test.ts` | Onboarding, a balance read off the chain and checked against a direct RPC call, and a signature the **node's own decoder** recovers to the right address |
+| `test/e2e/foresight.test.ts` | A **real market deployed to chain 7412**, staked through the popup, resolved by the operator, claimed through the popup — every step checked against `stakeOf`, `payoutOf`, `claimed` and a balance that moved by exactly the contract's arithmetic |
+| `test/e2e/deploy.test.ts` | Two **real tokens deployed to chain 7412** from micro-mint's bytecode, with `symbol()`, `decimals()`, `cap()` and `owner()` read back off the chain |
 | `test/e2e/coexistence.test.ts` | EIP-6963 with a rival wallet installed |
 | `test/e2e/worker-restart.test.ts` | The service worker killed mid-approval |
 
-Two of these use an **oracle rather than a self-check**, which is the pattern the signing core
-established: the QR encoder is checked by `jsQR` decoding its output, and the signature is checked by
-`hearth/node/src/chain/transaction.js` — the running network's own implementation, not ours to adjust
-when it disagrees. A self-check is a check that cannot fail.
+Four of these use an **oracle rather than a self-check**, which is the pattern the signing core
+established: the QR encoder is checked by `jsQR` decoding its output, the signature by
+`hearth/node/src/chain/transaction.js`, the ABI encoder by micro-mint's own `encodeConstructorArgs`,
+and the token artefacts by micro-mint's committed file. None of them is ours to adjust when it
+disagrees, and each **fails rather than skipping** when its oracle is absent — micro-mint,
+micro-foresight and hearth are all public, so CI clones them without a secret. A self-check is a
+check that cannot fail.
+
+**Verify positively, never from an error string.** The phase-2 agent measured that a corrupted
+signature produces a byte-identical "insufficient funds" refusal from this node, so an absence of
+error is not evidence. Every claim in the two new suites ends at something the chain returns: a
+receipt whose `status` is 1 (the harness throws on 0 — a reverted call is still mined), runtime
+bytecode at an address, a symbol, a `stakeOf`, a balance that moved by exactly stake plus fee.
+
+The guards were then **broken on purpose against a green baseline**: sixteen mutations — a swapped
+`decimals_`/`initialSupply_`, a flipped bytecode byte, a fee taken off the top instead of the losing
+pool, an empty `eth_call` return read as a zero, a directory's pool carried through, a
+`javascript:` endpoint accepted. Fifteen went red immediately. The sixteenth, deleting the
+already-claimed check, stayed **green** — the test covering it also zeroed the payout, so the flag
+was never load-bearing. That test is now `claimed` alone with a stale non-zero payout beside it, and
+it catches the mutation.
 
 The oracles earned their place. `jsQR` found three real defects in the QR encoder that every
 self-consistent assertion had passed: a transposed format-information block, a zig-zag walk whose
@@ -154,6 +217,13 @@ moment they exist, with no change here.
 - **No indexer.** History is read by walking blocks, so the wallet works against any Hearth node with
   every CloudsForge service switched off. The screen says how far back it looked rather than implying
   it has everything.
+- **No market creation.** The oracle role, category curation, the house seed and approvals are
+  operator machinery. A self-custody key is the wrong place for them.
+- **No Foresight API in any path that matters.** Discovery is off by default and may contribute a
+  contract address and a question. Every number on every screen comes from the contract.
+- **No token bytecode of its own.** The three templates are micro-mint's committed artefacts,
+  copied by a generator and diffed by a test. A fourth variant here would be the second audited set
+  the design authority forbids.
 - **No telemetry.** §7: if it cannot be built without seeing an address, a balance or a transaction,
   it is not built.
 - **No `<all_urls>` host permission.** A custom RPC endpoint is an *optional* permission, requested
