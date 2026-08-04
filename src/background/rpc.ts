@@ -176,6 +176,47 @@ export async function getChainId(chain: ChainRecord): Promise<bigint> {
   return fromQuantity(await rpc(chain, 'eth_chainId'), 'eth_chainId');
 }
 
+/**
+ * Ask the node which chain it is, and refuse to go on if it is not the one we think.
+ *
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ * THIS FUNCTION EXISTS BECAUSE `getChainId` HAD NO CALLERS.
+ *
+ * The wallet knew a chain id the way a person knows what they were told: `settings.selectedChainId`
+ * was remembered, matched against a stored record, and then printed as fact. Nothing anywhere ever
+ * asked the node. So a custom RPC pointed at the wrong chain — a user's own node syncing a
+ * different network, an endpoint that moved, an operator who repointed it — produced a wallet
+ * confidently naming a chain it had never observed, showing that chain's currency symbol over a
+ * balance from somewhere else.
+ *
+ * 25-wallet-clients.md §1.1 refuses to let custodial and self-custody balances share a total
+ * "because that total is a lie about who can take it away from you". A chain name is the same class
+ * of claim: it is what tells a user whether the money on screen is real. Being wrong in the
+ * reassuring direction — saying "Hearth Testnet" over mainnet funds — is how somebody treats real
+ * money as disposable.
+ *
+ * AND IT IS NOT ONLY A LABEL. EIP-155 puts the chain id INSIDE the signature. A transaction signed
+ * for 7412 and broadcast to 7411 is invalid there — but the same signed bytes are valid on 7412,
+ * so anybody who sees them can replay them on the chain they were really meant for. Signing for a
+ * chain nobody verified is how a testnet rehearsal becomes a mainnet transfer.
+ *
+ * So this is called on every path that signs, and the refusal names both numbers.
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ */
+export async function assertChainId(chain: ChainRecord): Promise<bigint> {
+  const reported = await getChainId(chain);
+  if (reported !== BigInt(chain.id)) {
+    throw new ProviderError(
+      INTERNAL_ERROR,
+      `${chain.rpcUrl} says it is chain ${reported}, but this wallet has it configured as ${chain.id} (${chain.name}). `
+      + 'Nothing has been signed. A chain id is part of the signature itself, so signing against the wrong one '
+      + 'produces a transaction that is invalid where you sent it and replayable where it was really meant for. '
+      + 'Check the network settings for this endpoint before doing anything else.',
+    );
+  }
+  return reported;
+}
+
 export async function getBlockNumber(chain: ChainRecord): Promise<bigint> {
   return fromQuantity(await rpc(chain, 'eth_blockNumber'), 'eth_blockNumber');
 }

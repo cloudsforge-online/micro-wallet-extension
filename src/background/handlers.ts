@@ -30,7 +30,7 @@ import { getLocal, setLocal } from './storage.ts';
 import { isUnlocked, touchSession } from './session.ts';
 import { enqueue } from './requests.ts';
 import { readMarket } from './contracts.ts';
-import { estimateGas, getNonce, rpc } from './rpc.ts';
+import { assertChainId, estimateGas, getNonce, rpc } from './rpc.ts';
 
 /**
  * Read methods forwarded verbatim to the node.
@@ -134,9 +134,12 @@ export async function previewTransaction(
   const data = raw['data'] == null ? '0x' : requireString(raw['data'], 'data');
   const valueWei = raw['value'] == null ? 0n : fromQuantity(raw['value'], 'value');
 
-  const [estimate, nonce] = await Promise.all([
+  // The chain is OBSERVED here, not assumed. This throws when the node disagrees with the record,
+  // so a preview is never drawn for a chain nobody checked — see rpc.ts's assertChainId.
+  const [estimate, nonce, reportedChainId] = await Promise.all([
     estimateGas(chain, { from, to, value: toQuantity(valueWei), data }),
     getNonce(chain, from),
+    assertChainId(chain),
   ]);
 
   const gas = raw['gas'] != null ? fromQuantity(raw['gas'], 'gas') : (estimate.gas * 12n) / 10n;
@@ -190,6 +193,9 @@ export async function previewTransaction(
     valueWei: valueWei.toString(),
     data,
     chainId: chain.id,
+    chainName: chain.name,
+    currencySymbol: chain.currency.symbol,
+    reportedChainId: Number(reportedChainId),
     gas: gas.toString(),
     gasPrice: gasPrice.toString(),
     nonce: (raw['nonce'] != null ? fromQuantity(raw['nonce'], 'nonce') : nonce).toString(),

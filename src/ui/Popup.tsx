@@ -55,8 +55,48 @@ export function Popup(): React.JSX.Element {
   if (!state.unlocked) return <Locked onUnlocked={refresh} />;
 
   const account = state.accounts.find((a) => a.address === state.settings.selectedAddress) ?? state.accounts[0];
-  const chain = state.chains.find((c) => c.id === state.settings.selectedChainId) ?? state.chains[0];
-  if (account === undefined || chain === undefined) return <main><p>This wallet has no accounts.</p></main>;
+  if (account === undefined) return <main><p>This wallet has no accounts.</p></main>;
+
+  /* ────────────────────────────────────────────────────────────────────────────────────────────
+   * NO FALLBACK TO A CHAIN NOBODY SELECTED.
+   *
+   * This was `?? state.chains[0]`, and `state.chains[0]` is Hearth MAINNET. So a selected id with
+   * no matching record — a chain a dapp added and the user later removed, a settings record from an
+   * older build — silently relabelled everything on screen as mainnet, including the currency
+   * symbol printed over the balance.
+   *
+   * That is not a fallback, it is a fabricated fact. §1.1 forbids summing custodial and
+   * self-custody balances "because that total is a lie about who can take it away from you"; naming
+   * a chain the wallet has not got a record for is the same lie in one field. A wallet that does
+   * not know which chain it is on has to say so, and the reassuring answer is the worst one to
+   * guess.
+   * ──────────────────────────────────────────────────────────────────────────────────────────── */
+  const chain = state.chains.find((c) => c.id === state.settings.selectedChainId);
+  if (chain === undefined) {
+    return (
+      <main>
+        <h1>Unrecognised chain — id {state.settings.selectedChainId}</h1>
+        <div className="warn danger" data-testid="unrecognised-chain">
+          <strong>This wallet has no record of the network it is set to</strong>
+          <span>
+            It cannot tell you whether the balance shown would be test money or real money, what the
+            currency is called, or who runs the endpoint it would ask. Nothing will be signed while
+            it is in this state.
+          </span>
+        </div>
+        <p className="muted">Pick a network this wallet knows about:</p>
+        <select
+          aria-label="Network"
+          data-testid="chain-select"
+          value=""
+          onChange={(e) => { void call('selectChain', { chainId: Number(e.target.value) }).then(refresh); }}
+        >
+          <option value="" disabled>Choose a network…</option>
+          {state.chains.map((c) => <option key={c.id} value={c.id}>{c.name} — chain {c.id}</option>)}
+        </select>
+      </main>
+    );
+  }
 
   return (
     <main>

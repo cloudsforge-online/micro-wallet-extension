@@ -515,8 +515,17 @@ describe('Foresight: a position that survives the platform', () => {
     console.log(`    CLAIM MINED: ${hash} in block ${receipt.blockNumber} — ${owed} wei paid to ${wallet} from ${market}`);
 
     // And a second claim is refused by name rather than by a revert the user paid for.
+    //
+    // POLL THE TEXT, NOT THE ELEMENT — the third instance of the same race in this file. Both
+    // `market-status` and the claim panel are already on screen from the PRE-claim render, so
+    // waiting for either returns instantly and reads the state before the refresh. Only the
+    // refusal's own wording means the re-read has landed.
     await popup.getByTestId('claim-done').click();
-    await awaitMarketRead(popup);
+    await popup.waitForFunction(
+      () => /already claimed/.test(document.querySelector('[data-testid="claim-refusal"]')?.textContent ?? ''),
+      undefined,
+      { timeout: 120_000 },
+    );
     assert.match(await popup.getByTestId('claim-refusal').innerText(), /already claimed/);
     assert.equal(await popup.getByTestId('claim-submit').count(), 0, 'the claim button is still offered after claiming');
     await popup.close();

@@ -131,6 +131,17 @@ export interface TransactionPreview {
   readonly valueWei: string;
   readonly data: string;
   readonly chainId: number;
+  /**
+   * The chain's name and currency, taken from the wallet's record for `chainId`.
+   *
+   * CARRIED RATHER THAN ASSUMED. The confirmation window used to print "EMBER" over every amount,
+   * which is a hard-coded currency name on a screen whose whole job is to state what is about to
+   * happen. On any chain a user added themselves that was simply wrong.
+   */
+  readonly chainName: string;
+  readonly currencySymbol: string;
+  /** What the NODE answered to `eth_chainId` when this preview was built. */
+  readonly reportedChainId: number;
   readonly gas: string;
   readonly gasPrice: string;
   readonly nonce: string;

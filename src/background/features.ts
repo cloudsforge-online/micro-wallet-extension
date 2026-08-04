@@ -84,6 +84,9 @@ async function signAndSend(
 ): Promise<{ hash: string; raw: string; preview: TransactionPreview }> {
   await requireUnlocked();
   const chain = await selectedChain();
+  // `previewTransaction` calls `assertChainId`, so a node that disagrees with the wallet's record
+  // stops this here — before a signature exists — rather than producing bytes that are invalid
+  // where they were sent and replayable where they were not. EIP-155 puts the id in the signature.
   const preview = await previewTransaction('wallet', tx, chain, observed);
   const signed = await signTx(preview.from, {
     type: 0,

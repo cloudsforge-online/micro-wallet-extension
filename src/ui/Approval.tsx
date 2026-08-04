@@ -232,7 +232,7 @@ function TransactionBody(props: { tx: TransactionPreview; busy: boolean; onDecid
       {/* §5.1's requirement, on the DAPP path. The pool was read by the worker when this window was
           built — signing time — and is stated as observed, with its block. A page can display
           whatever odds it likes; this panel is the wallet's own reading of the contract. */}
-      {props.tx.foresight !== null ? <ForesightBody foresight={props.tx.foresight} /> : null}
+      {props.tx.foresight !== null ? <ForesightBody foresight={props.tx.foresight} symbol={props.tx.currencySymbol} /> : null}
 
       <div className="panel" style={{ marginTop: 10 }}>
         <Decoded tx={props.tx} />
@@ -241,12 +241,14 @@ function TransactionBody(props: { tx: TransactionPreview; busy: boolean; onDecid
         <div className="mono">{props.tx.from}</div>
         <div className="muted" style={{ marginTop: 8 }}>To</div>
         <div className="mono" data-testid="tx-to">{props.tx.to ?? 'a new contract'}</div>
+        <div className="muted" style={{ marginTop: 8 }}>Network</div>
+        <div data-testid="tx-chain">{props.tx.chainName} · chain {props.tx.chainId}, confirmed by the node</div>
         <div className="muted" style={{ marginTop: 8 }}>Value</div>
-        <div data-testid="tx-value">{formatUnits(BigInt(props.tx.valueWei), 18)} EMBER</div>
+        <div data-testid="tx-value">{formatUnits(BigInt(props.tx.valueWei), 18)} {props.tx.currencySymbol}</div>
       </div>
 
       <div className="row between" style={{ marginTop: 10 }}>
-        <span className="muted">Maximum fee {formatUnits(maxFee, 18, 8)} EMBER</span>
+        <span className="muted">Maximum fee {formatUnits(maxFee, 18, 8)} {props.tx.currencySymbol}</span>
         <button className="ghost" data-testid="edit-fee" onClick={() => setEditing((v) => !v)}>{editing ? 'Done' : 'Edit fee'}</button>
       </div>
       {editing ? (
@@ -290,23 +292,23 @@ function TransactionBody(props: { tx: TransactionPreview; busy: boolean; onDecid
  * is exactly how "a wallet that shows a fixed payout on a parimutuel" happens: not by anybody
  * deciding to lie, but by somebody tidying a paragraph away from beside a number.
  */
-function ForesightBody(props: { foresight: NonNullable<TransactionPreview['foresight']> }): React.JSX.Element {
+function ForesightBody(props: { foresight: NonNullable<TransactionPreview['foresight']>; symbol: string }): React.JSX.Element {
   const { observation: m, projection: p } = props.foresight;
   return (
     <div className="panel" style={{ marginTop: 10 }} data-testid="approval-foresight">
       <strong>Staking on {outcomeName(p.outcome)} in a prediction market</strong>
       <div className="row between" style={{ marginTop: 8 }}>
         <span className="muted">Pool on YES</span>
-        <span data-testid="approval-pool-yes">{formatUnits(BigInt(m.poolYesWei), 18, 6)} EMBER · {formatBps(m.oddsYesBps)}</span>
+        <span data-testid="approval-pool-yes">{formatUnits(BigInt(m.poolYesWei), 18, 6)} {props.symbol} · {formatBps(m.oddsYesBps)}</span>
       </div>
       <div className="row between" style={{ marginTop: 4 }}>
         <span className="muted">Pool on NO</span>
-        <span data-testid="approval-pool-no">{formatUnits(BigInt(m.poolNoWei), 18, 6)} EMBER · {formatBps(m.oddsNoBps)}</span>
+        <span data-testid="approval-pool-no">{formatUnits(BigInt(m.poolNoWei), 18, 6)} {props.symbol} · {formatBps(m.oddsNoBps)}</span>
       </div>
       <hr />
       <div className="row between">
         <span className="muted">If it settled {outcomeName(p.outcome)} at this exact pool, your share would be</span>
-        <strong data-testid="approval-projection">{formatUnits(BigInt(p.shareIfResolvedNowWei), 18, 6)} EMBER</strong>
+        <strong data-testid="approval-projection">{formatUnits(BigInt(p.shareIfResolvedNowWei), 18, 6)} {props.symbol}</strong>
       </div>
       <div className="warn" style={{ marginTop: 10 }} data-testid="approval-caveat">
         <strong>This is not a payout</strong>
@@ -323,7 +325,7 @@ function Decoded(props: { tx: TransactionPreview }): React.JSX.Element {
   const d = props.tx.decoded;
   switch (d.kind) {
     case 'transfer-native':
-      return <div data-testid="decoded"><strong>Send {formatUnits(BigInt(d.amountWei), 18)} EMBER</strong><div className="mono muted">to {d.to}</div></div>;
+      return <div data-testid="decoded"><strong>Send {formatUnits(BigInt(d.amountWei), 18)} {props.tx.currencySymbol}</strong><div className="mono muted">to {d.to}</div></div>;
     case 'erc20-transfer':
       return <div data-testid="decoded"><strong>Transfer {d.amount} tokens</strong><div className="mono muted">token {d.token}</div><div className="mono muted">to {d.to}</div></div>;
     case 'erc20-approve':
