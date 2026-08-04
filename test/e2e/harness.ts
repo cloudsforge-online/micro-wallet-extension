@@ -290,7 +290,7 @@ export async function launch(options: LaunchOptions = {}): Promise<Harness> {
   const sw = await worker();
   const extensionId = new URL(sw.url()).host;
 
-  return {
+  const harness: Harness = {
     context,
     extensionId,
     worker,
@@ -306,6 +306,27 @@ export async function launch(options: LaunchOptions = {}): Promise<Harness> {
       rmSync(profile, { recursive: true, force: true });
     },
   };
+
+  /* ──────────────────────────────────────────────────────────────────────────────────────────────
+   * POINT THE EXTENSION AT THE SAME NODE THE TEST IS TALKING TO.
+   *
+   * `HEARTH_RPC_URL` is documented as "overridable so CI can point at the node it started itself",
+   * and until now it only redirected `nodeRpc` — the test's own witness. The EXTENSION went on
+   * using the URL baked into BUILTIN_CHAINS, `http://127.0.0.1:8545`. That happened to be right
+   * everywhere it had been run, because CI starts its node on 8545 and this laptop has one there
+   * too, so the two were the same node by coincidence of the port rather than by construction.
+   *
+   * The moment they are not — which is exactly what happens when somebody reproduces a CI failure
+   * against a second node on another port — the suite silently drives the wallet against one chain
+   * and asserts against another, and every failure it reports is a lie about the wallet. Making the
+   * override apply to both is what lets `HEARTH_RPC_URL` be used to reproduce anything at all.
+   * ────────────────────────────────────────────────────────────────────────────────────────────── */
+  const builtin = BUILTIN_CHAINS.find((c) => c.id === CHAIN_ID);
+  if (builtin !== undefined && builtin.rpcUrl !== RPC_URL) {
+    await useRpcUrl(harness, RPC_URL);
+  }
+
+  return harness;
 }
 
 /**

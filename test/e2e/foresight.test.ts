@@ -41,8 +41,41 @@ import {
 const E = 10n ** 18n;
 const STAKE = E; // 1 EMBER
 const FEE_BPS = 200n;
-/** Long enough to drive the whole UI flow before the market closes, short enough to then resolve. */
-const OPEN_FOR_SECONDS = 100;
+
+/**
+ * How long the market stays open, measured in the CHAIN'S seconds.
+ *
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ * THIS NUMBER AND ITS CLOCK MADE CI RED, AND THEN MADE THE LOCAL RUN RED THE OTHER WAY.
+ *
+ * `ForesightMarket` compares `closeTime` against `block.timestamp`, so the deadline is in CHAIN
+ * time — but every wait the suite performs is in WALL time, and on Hearth the two do not run at the
+ * same speed. Measured on the estate node over a minute: the chain clock advanced 53 seconds while
+ * 60 passed, a rate of 0.88x, and the tip sat 5–28 seconds behind the wall clock as blocks were
+ * sealed. On CI's node, which mines at HEARTH_THROTTLE=0.9, the tip was about 59 seconds behind.
+ *
+ * Both failures came from that gap, from opposite directions:
+ *
+ *   - Anchoring to the tip alone gave a 100-second window that was only 41 real seconds on CI,
+ *     because the tip started 59 seconds in the past. The market expired mid-suite.
+ *   - Anchoring to wall time instead made the deadline one the chain reaches LATE — 300 wall
+ *     seconds is about 264 chain seconds — so the claim test waited out its whole budget and the
+ *     chain still had not got there.
+ *
+ * What is correct is what the contract itself uses: chain time, with the tip as the floor the
+ * constructor demands (`closeTime_ <= block.timestamp` reverts) and wall time as a second floor so
+ * a tip briefly ahead of the clock cannot shorten the window. The SIZE is then chosen in chain
+ * seconds against the wall-clock work it has to cover, converted at the observed rate:
+ *
+ *     tests 1 and 2 cost at most 169s of wall time (measured against a throttled node)
+ *     169s of wall time is about 149 chain seconds at 0.88x
+ *     240 chain seconds leaves roughly 60% margin over that
+ *
+ * Sizing it larger is not free: the claim test spends whatever is left of the window waiting, so
+ * every extra second here is a second the suite sits idle on a fast machine.
+ * ════════════════════════════════════════════════════════════════════════════════════════════════
+ */
+const OPEN_FOR_SECONDS = 240;
 
 describe('Foresight: a position that survives the platform', () => {
   let harness: Harness;
@@ -83,7 +116,12 @@ describe('Foresight: a position that survives the platform', () => {
     // against a REAL Solidity constructor — the three types micro-mint's encoder does not have, so
     // test/abi.test.ts's differential cannot cover them. A wrong layout here reverts the creation.
     const tip = await nodeRpc('eth_getBlockByNumber', ['latest', false]) as { timestamp: string };
-    closeTime = Number(BigInt(tip.timestamp)) + OPEN_FOR_SECONDS;
+    const tipSeconds = Number(BigInt(tip.timestamp));
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    // See OPEN_FOR_SECONDS. The tip is the floor the constructor demands; wall time is what the
+    // suite actually spends. Whichever is later wins.
+    closeTime = Math.max(tipSeconds, nowSeconds) + OPEN_FOR_SECONDS;
+    console.log(`    chain tip is ${nowSeconds - tipSeconds}s behind the wall clock; the market will be open for ${closeTime - nowSeconds}s of real time`);
     const questionHash = `0x${'7c'.repeat(32)}`;
 
     const creation = foresightMarketBytecode() + Buffer.from(encodeArgs([
@@ -110,9 +148,42 @@ describe('Foresight: a position that survives the platform', () => {
 
   after(async () => { await harness?.close(); });
 
+  /**
+   * The fixture is still what the next assertions assume it is.
+   *
+   * ──────────────────────────────────────────────────────────────────────────────────────────────
+   * WHY THIS EXISTS. When the market expired mid-suite, it presented as `locator.waitFor: Timeout
+   * 45000ms exceeded waiting for market-status` and, one test later, as a position reading
+   * `0 EMBER`. Both look exactly like a broken contract call, and neither says the one thing that
+   * was actually true: the market had closed. Three rounds of diagnosis went into a fact this
+   * single call would have named in one line.
+   *
+   * It reads `status()` and `closeTime()` DIRECTLY — the test's own witness over TCP, not through
+   * the extension — so it is checking the fixture rather than the subject. A failure here means the
+   * test setup is wrong; a failure after it means the wallet is.
+   * ────────────────────────────────────────────────────────────────────────────────────────────── */
+  async function assertMarketStillOpen(what: string): Promise<void> {
+    const status = new Return(
+      await callContract(market, encodeCall(MARKET_SIGNATURES.status)), 'status()',
+    ).small(0, 8, 'status()');
+    const block = await nodeRpc('eth_getBlockByNumber', ['latest', false]) as { timestamp: string };
+    const chainNow = Number(BigInt(block.timestamp));
+    if (status !== 0 || chainNow >= closeTime) {
+      throw new Error(
+        `THE FIXTURE EXPIRED BEFORE "${what}" COULD RUN — this is a defect in the test setup, not in the wallet.\n`
+        + `  market ${market} status()=${status} (0=Open 1=Resolved 2=Void)\n`
+        + `  closeTime=${closeTime} (${new Date(closeTime * 1000).toISOString()})\n`
+        + `  chain clock=${chainNow} (${new Date(chainNow * 1000).toISOString()}), ${chainNow - closeTime}s past close\n`
+        + `  wall clock=${Math.floor(Date.now() / 1000)}\n`
+        + 'Raise OPEN_FOR_SECONDS: the suite spent longer before this point than the market was open for.',
+      );
+    }
+  }
+
   /* ---------------------------------------------------------------------------------- reading - */
 
   test('the wallet reads the market off the chain, with no Foresight API configured', async () => {
+    await assertMarketStillOpen('the wallet reads the market off the chain');
     const popup = await openPopup(harness);
 
     // The shipped default. Asserting it rather than setting it: if this ever ships as anything
@@ -158,6 +229,7 @@ describe('Foresight: a position that survives the platform', () => {
   /* ----------------------------------------------------------------------------------- staking */
 
   test('a stake is signed locally, lands on chain, and stakeOf says so afterwards', async () => {
+    await assertMarketStillOpen('a stake is signed locally');
     const proxy = await startRecordingProxy();
     try {
       // The user's "custom RPC" (§5), used here so the test can see the raw signed bytes. Every
@@ -253,7 +325,15 @@ describe('Foresight: a position that survives the platform', () => {
 
       // 5. And the screen now shows the position the chain holds.
       await popup.getByTestId('stake-again').click();
-      await popup.getByTestId('my-yes').waitFor({ timeout: 45_000 });
+      // WAIT FOR THE VALUE, NOT THE ELEMENT. `my-yes` is already on screen showing the PRE-stake
+      // position, so `waitFor` on it returns instantly and reads 0 EMBER — the same "present in two
+      // states" race that the discovery panel had, caught here on a fast node where the test
+      // outruns the re-read. Polling the text is the only wait that means what it says.
+      await popup.waitForFunction(
+        () => document.querySelector('[data-testid="my-yes"]')?.textContent?.trim() === '1 EMBER',
+        undefined,
+        { timeout: 45_000 },
+      );
       assert.match(await popup.getByTestId('my-yes').innerText(), /^1 EMBER$/);
       assert.equal((await popup.getByTestId('odds-yes').innerText()).trim(), '100%');
 
@@ -267,6 +347,13 @@ describe('Foresight: a position that survives the platform', () => {
   /* --------------------------------------------------- the API's absence, actually exercised --- */
 
   test('with the directory pointed at a dead endpoint, the position still reads in full', async () => {
+    // NO `assertMarketStillOpen` HERE, deliberately. This test's subject is that a POSITION reads
+    // when the directory is down, and a position does not stop existing when a market closes —
+    // that is the whole point of §5.1. Requiring the market to still be open coupled this test to
+    // the fixture's timer for no reason, and it duly failed on a throttled node after the two tests
+    // before it had spent the window. What replaces the coupling is stronger, not weaker: the
+    // status the wallet shows is compared against the status the CHAIN reports at that moment,
+    // whatever it happens to be.
     // A REAL dead port: bound to reserve it, then released. `discoverMarkets` will get an actual
     // connection refusal, not a rejection a test wrote.
     const { createServer } = await import('node:http');
@@ -297,7 +384,17 @@ describe('Foresight: a position that survives the platform', () => {
     await popup.getByTestId('market-status').waitFor({ timeout: 45_000 });
     assert.match(await popup.getByTestId('my-yes').innerText(), /^1 EMBER$/);
     assert.match(await popup.getByTestId('pool-total').innerText(), /^1 EMBER$/);
-    assert.equal((await popup.getByTestId('market-status').innerText()).trim(), 'open');
+
+    // The wallet's status against the chain's, read independently over TCP. Hardcoding 'open' here
+    // asserted the fixture; this asserts the wallet.
+    const chainStatus = new Return(
+      await callContract(market, encodeCall(MARKET_SIGNATURES.status)), 'status()',
+    ).small(0, 8, 'status()');
+    assert.equal(
+      (await popup.getByTestId('market-status').innerText()).trim(),
+      (['open', 'resolved', 'void'] as const)[chainStatus],
+      'the wallet and the chain disagree about this market\'s status while the directory is down',
+    );
 
     const witness = new Return(
       await callContract(market, encodeCall(MARKET_SIGNATURES.stakeOf, [{ type: 'address', value: wallet.toLowerCase() }])),
@@ -318,11 +415,28 @@ describe('Foresight: a position that survives the platform', () => {
   test('after the oracle resolves, the wallet claims — and the money arrives', async () => {
     // Wait for the contract's own clock to pass close. `oracleAct` refuses to resolve an open
     // market (:239), which is the rule that stops a resolver staking on the answer.
-    const until = Date.now() + 150_000;
+    // The budget is the window divided by the SLOWEST rate worth tolerating, not the window itself:
+    // the chain clock runs behind wall time, so waiting `OPEN_FOR_SECONDS` of wall time is never
+    // enough. 0.5x is half the measured 0.88x, which is generous without being unbounded.
+    const until = Date.now() + ((OPEN_FOR_SECONDS / 0.5) + 120) * 1000;
+    const startedAt = Date.now();
+    const firstTs = Number(BigInt((await nodeRpc('eth_getBlockByNumber', ['latest', false]) as { timestamp: string }).timestamp));
     for (;;) {
       const block = await nodeRpc('eth_getBlockByNumber', ['latest', false]) as { timestamp: string; number: string };
-      if (Number(BigInt(block.timestamp)) >= closeTime) break;
-      if (Date.now() > until) throw new Error('the chain never reached the market\'s close time');
+      const chainNow = Number(BigInt(block.timestamp));
+      if (chainNow >= closeTime) break;
+      if (Date.now() > until) {
+        // Legible rather than "it did not happen": the rate is the fact that explains it.
+        const wallElapsed = (Date.now() - startedAt) / 1000;
+        throw new Error(
+          `The chain never reached the market's close time.\n`
+          + `  closeTime      ${closeTime} (${new Date(closeTime * 1000).toISOString()})\n`
+          + `  chain clock    ${chainNow}, still ${closeTime - chainNow}s short\n`
+          + `  waited         ${wallElapsed.toFixed(0)}s of wall time, in which the chain clock advanced ${chainNow - firstTs}s\n`
+          + `  observed rate  ${((chainNow - firstTs) / wallElapsed).toFixed(2)}x wall time\n`
+          + 'The chain is running slower than this budget assumes. Lower OPEN_FOR_SECONDS or raise the divisor.',
+        );
+      }
       await new Promise((done) => setTimeout(done, 2000));
     }
 
