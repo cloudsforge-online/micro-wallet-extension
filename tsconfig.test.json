@@ -1,0 +1,12 @@
+{
+  // The suite and the build tooling run in Node, so they get Node's types back — and they get
+  // them ONLY here, so that nothing under src/ can quietly import `node:fs` and still compile.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "chrome"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rewriteRelativeImportExtensions": true
+  },
+  "include": ["test", "tools", "src"]
+}

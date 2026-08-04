@@ -1,0 +1,51 @@
+{
+  "manifest_version": 3,
+  "name": "CloudsForge Wallet",
+  "version": "1.0.0",
+  "description": "Self-custody wallet for Hearth. You hold the key; the platform cannot move your funds, sign for you or freeze you.",
+  "homepage_url": "https://github.com/cloudsforge-online/micro-wallet-extension",
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "CloudsForge Wallet",
+    "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" }
+  },
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+
+  "background": { "service_worker": "background.js" },
+
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["inpage.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ],
+
+  "permissions": ["storage", "alarms", "tabs"],
+
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*",
+    "https://rpc.hearth.cloudsforge.online/*"
+  ],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+
+  "web_accessible_resources": [
+    { "resources": ["inpage.js"], "matches": ["http://*/*", "https://*/*"] }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+
+  "minimum_chrome_version": "111"
+}

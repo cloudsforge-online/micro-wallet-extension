@@ -1,0 +1,10 @@
+# pnpm reads its settings from here rather than from package.json as of pnpm 11.
+#
+# esbuild installs its platform binary from a postinstall script, and pnpm blocks install-time
+# scripts by default. Without this allowance the toolchain installs and then fails to run,
+# reporting a missing binary rather than a blocked script. Nothing else in the tree is permitted to
+# run code at install time — in particular playwright-core is used rather than playwright precisely
+# because the former has no postinstall browser download, so the browser is fetched by an explicit
+# command in CI that can be seen and cached rather than by a script nobody reads.
+allowBuilds:
+  esbuild: true

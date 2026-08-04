@@ -1,0 +1,149 @@
+/* The build. esbuild, four entry points, two targets, no framework.
+ *
+ * WHY NOT VITE, WHICH THE REST OF THE ESTATE USES. Every other frontend here is one page served by
+ * nginx, and Vite is exactly right for that. An extension is four separate programs with four
+ * different module systems in one package:
+ *
+ *   background.js  a service worker (Chrome) / event page (Firefox) — classic script, no imports
+ *   content.js     an isolated-world content script — classic script, no imports
+ *   inpage.js      a MAIN-world script injected into every page — classic script, no imports
+ *   ui.js          three extension pages — an ES module, with JSX and a stylesheet
+ *
+ * The first three MUST be single self-contained files: a content script cannot `import`, and a
+ * service worker that code-splits fetches a chunk at signing time. Vite's Rollup pipeline emits
+ * shared chunks by default and turning that off for three of four entries is more configuration
+ * than this file is. esbuild does it directly.
+ *
+ * WHAT THE TWO TARGETS SHARE: everything except the manifest. §4.3 — "Firefox ships from the same
+ * source with its own manifest and AMO signing. Opera and Edge take the Chrome build unchanged;
+ * they are separate listings, not separate products." So there is no `--target=opera`, and adding
+ * one would be the first step towards three products that drift.
+ */
+
+import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, cpSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { build } from 'esbuild';
+import { placeholderIcon } from './png.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const root = resolve(here, '..');
+
+const target = (process.argv.find((a) => a.startsWith('--target=')) ?? '--target=chrome').split('=')[1];
+if (target !== 'chrome' && target !== 'firefox') {
+  throw new Error(`build: --target must be chrome or firefox, not ${target}. Opera and Edge take the Chrome build unchanged.`);
+}
+const dev = process.argv.includes('--dev');
+const out = join(root, 'dist', target);
+
+rmSync(out, { recursive: true, force: true });
+mkdirSync(join(out, 'icons'), { recursive: true });
+
+/* ------------------------------------------------------------------------------- the mark ----- */
+
+/**
+ * The EIP-6963 icon, which must be a data URI so a dapp can draw the wallet picker without a
+ * network fetch that would tell somebody which dapps this wallet's users visit.
+ *
+ * Read from micro-wallet-assets if the sibling checkout has it; a plain lozenge otherwise. The
+ * fallback is announced on stdout rather than being silent, because "the icon is a placeholder" is
+ * exactly the kind of thing that ships.
+ */
+const ASSET_PATHS = [
+  // 25-wallet-clients.md §6, "Extension": the mark in both polarities plus the four raster sizes.
+  resolve(root, '..', 'wallet-assets', 'assets', 'extension', 'mark-light.svg'),
+  resolve(root, '..', 'wallet-assets', 'assets', 'mark', 'mark-light.svg'),
+];
+let icon = '';
+const foundMark = ASSET_PATHS.find((p) => existsSync(p));
+if (foundMark !== undefined) {
+  icon = `data:image/svg+xml;base64,${readFileSync(foundMark).toString('base64')}`;
+  console.log(`  mark:    ${foundMark}`);
+} else {
+  console.log('  mark:    PLACEHOLDER — micro-wallet-assets has no assets/extension/mark-light.svg yet.');
+  console.log('           The EIP-6963 icon falls back to the lozenge in src/inpage/index.ts.');
+}
+
+const rasterDir = resolve(root, '..', 'wallet-assets', 'assets', 'extension');
+const sizes = [16, 32, 48, 128];
+const haveRaster = sizes.every((s) => existsSync(join(rasterDir, `icon-${s}.png`)));
+if (haveRaster) {
+  for (const size of sizes) cpSync(join(rasterDir, `icon-${size}.png`), join(out, 'icons', `icon-${size}.png`));
+  console.log(`  icons:   ${rasterDir}`);
+} else {
+  for (const size of sizes) writeFileSync(join(out, 'icons', `icon-${size}.png`), placeholderIcon(size));
+  console.log('  icons:   PLACEHOLDER — micro-wallet-assets has no assets/extension/icon-{16,32,48,128}.png yet.');
+}
+
+/* -------------------------------------------------------------------------------- the bundles - */
+
+const shared = {
+  bundle: true,
+  target: ['chrome111', 'firefox128'],
+  minify: !dev,
+  sourcemap: dev ? 'inline' : false,
+  legalComments: 'none',
+  logLevel: 'warning',
+  define: {
+    __WALLET_ICON__: JSON.stringify(icon),
+    // React reads this. Without it, esbuild leaves `process.env.NODE_ENV` in the bundle and the
+    // extension page throws ReferenceError: process is not defined on first render — a failure
+    // that looks like a blank popup with no console output the user will ever see.
+    'process.env.NODE_ENV': JSON.stringify(dev ? 'development' : 'production'),
+  },
+};
+
+await Promise.all([
+  // Classic scripts: no `format: esm`, no splitting, nothing to fetch at runtime.
+  build({ ...shared, entryPoints: [join(root, 'src/background/index.ts')], outfile: join(out, 'background.js'), format: 'iife', platform: 'browser' }),
+  build({ ...shared, entryPoints: [join(root, 'src/content/index.ts')], outfile: join(out, 'content.js'), format: 'iife', platform: 'browser' }),
+  build({ ...shared, entryPoints: [join(root, 'src/inpage/index.ts')], outfile: join(out, 'inpage.js'), format: 'iife', platform: 'browser' }),
+  // The pages, as a module, with the stylesheet emitted beside it as ui.css.
+  build({ ...shared, entryPoints: [join(root, 'src/ui/main.tsx')], outfile: join(out, 'ui.js'), format: 'esm', platform: 'browser', jsx: 'automatic' }),
+]);
+
+for (const page of readdirSync(join(root, 'public'))) {
+  cpSync(join(root, 'public', page), join(out, page));
+}
+
+/* -------------------------------------------------------------------------------- the manifest */
+
+const manifest = JSON.parse(readFileSync(join(root, `manifest.${target}.json`), 'utf8'));
+const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+if (manifest.version !== pkg.version) {
+  // A store listing is keyed on the manifest version and a mismatch is discovered at submission.
+  throw new Error(`build: manifest.${target}.json says ${manifest.version}, package.json says ${pkg.version}`);
+}
+writeFileSync(join(out, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+
+/* --------------------------------------------------------------------------- the two assertions */
+
+// THESE RUN ON EVERY BUILD AND THEY HAVE BOTH FAILED DURING DEVELOPMENT.
+//
+// 1. A content script or a service worker containing `import` or `export` is a file the browser
+//    refuses to load, and the symptom is silence: no error in any console the developer looks at,
+//    the extension simply does nothing. esbuild emits it whenever `format` is wrong or an entry
+//    accidentally becomes a chunk.
+for (const file of ['background.js', 'content.js', 'inpage.js']) {
+  const body = readFileSync(join(out, file), 'utf8');
+  if (/^\s*(import|export)\s/m.test(body) || /\bimport\s*\(/.test(body)) {
+    throw new Error(`build: ${file} contains a module statement — it must be a self-contained classic script`);
+  }
+}
+
+// 2. Nothing in the shipped package may reference a Node built-in. The signing core is written to
+//    have none (its own suite greps for them), but a transitive dependency or a stray `Buffer`
+//    would only surface as a runtime ReferenceError inside the worker, where nobody is watching.
+for (const file of ['background.js', 'content.js', 'inpage.js', 'ui.js']) {
+  const body = readFileSync(join(out, file), 'utf8');
+  for (const forbidden of ['require("node:', 'from"node:', "from'node:", 'process.versions.node']) {
+    if (body.includes(forbidden)) throw new Error(`build: ${file} reaches for a Node built-in (${forbidden})`);
+  }
+}
+
+const bytes = readdirSync(out, { recursive: true })
+  .map((f) => join(out, String(f)))
+  .filter((f) => existsSync(f) && !readdirSync(root).includes(f))
+  .reduce((sum, f) => { try { return sum + readFileSync(f).length; } catch { return sum; } }, 0);
+
+console.log(`  built:   dist/${target}  (${(bytes / 1024).toFixed(0)} kB)`);

@@ -1,0 +1,189 @@
+/* The wallet's stylesheet.
+ *
+ * The --cf-* values below are copied from @cloudsforge/ui's tokens.css so this wallet reads as the
+ * same studio as every other CloudsForge surface. They are copied rather than imported because the
+ * design system is a private package (see package.json's "//ui" note) and because its layout
+ * primitives assume 1200px of app chrome, not a 360px popup. Only the colour and type scales are
+ * taken; every layout rule here is this repository's own.
+ *
+ * ONE RULE IN THIS FILE IS A SAFETY RULE, NOT A STYLE. §1.1 of the design authority:
+ *
+ *   "Custodial and self-custody balances are never summed, never adjacent without labels, and
+ *    never share a colour."
+ *
+ * `--cf-self-custody` below is the colour this wallet's balances are drawn in, and it is
+ * deliberately NOT --cf-ember, which Forge Hub uses for the custodial balance. `.balance` carries
+ * the label "self-custody" as generated content that cannot be styled away, so a balance cannot
+ * appear on screen without it. There is no total anywhere in this extension that spans the two,
+ * and there is nowhere for one to be added: this wallet cannot see a custodial balance at all.
+ */
+
+:root {
+  --cf-ember: #e8622c;
+  --cf-ember-hover: #ff7b41;
+  --cf-ember-ink: #1a0f08;
+
+  /* Self-custody green. Distinct in hue from ember at every brightness, and distinguishable from
+   * it without colour too — the balance is set in a different weight and carries its own label. */
+  --cf-self-custody: #4fb477;
+
+  --cf-bg: #0d0b0a;
+  --cf-panel: #141110;
+  --cf-panel-2: #1c1817;
+  --cf-fg: #f2ebe3;
+  --cf-muted: #a89b90;
+  --cf-line: #2a2523;
+  --cf-danger: #e5484d;
+  --cf-caution: #f0a02c;
+
+  --cf-radius-sm: 4px;
+  --cf-radius: 6px;
+  --cf-radius-lg: 10px;
+  --cf-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--cf-bg);
+  color: var(--cf-fg);
+  font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body.popup { width: 360px; min-height: 560px; }
+body.page { padding: 0; }
+body.approval { width: 100%; min-height: 100vh; }
+
+main { padding: 16px; }
+.page main { max-width: 620px; margin: 0 auto; padding: 40px 24px 80px; }
+
+h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 15px; margin: 24px 0 8px; }
+p { margin: 0 0 12px; color: var(--cf-muted); }
+p.lede { color: var(--cf-fg); }
+
+hr { border: none; border-top: 1px solid var(--cf-line); margin: 20px 0; }
+
+button {
+  font: inherit;
+  border-radius: var(--cf-radius);
+  border: 1px solid var(--cf-line);
+  background: var(--cf-panel-2);
+  color: var(--cf-fg);
+  padding: 9px 14px;
+  cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--cf-muted); }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: var(--cf-ember); border-color: var(--cf-ember); color: var(--cf-ember-ink); font-weight: 600; }
+button.primary:hover:not(:disabled) { background: var(--cf-ember-hover); }
+button.danger { border-color: var(--cf-danger); color: var(--cf-danger); }
+button.ghost { background: transparent; }
+button.wide { width: 100%; }
+
+input, textarea, select {
+  font: inherit;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: var(--cf-radius);
+  border: 1px solid var(--cf-line);
+  background: var(--cf-panel);
+  color: var(--cf-fg);
+}
+input:focus, textarea:focus, select:focus { outline: 2px solid var(--cf-ember); outline-offset: 1px; }
+label { display: block; font-size: 12px; color: var(--cf-muted); margin: 12px 0 4px; }
+
+.row { display: flex; gap: 8px; align-items: center; }
+.row.between { justify-content: space-between; }
+.grow { flex: 1; }
+.stack { display: flex; flex-direction: column; gap: 8px; }
+
+.panel {
+  background: var(--cf-panel);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-lg);
+  padding: 14px;
+}
+
+.mono { font-family: var(--cf-mono); font-size: 12px; word-break: break-all; }
+
+/* --- The balance, and the label that cannot be removed ------------------- */
+.balance {
+  font-size: 28px;
+  font-weight: 650;
+  color: var(--cf-self-custody);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.balance::after {
+  content: "self-custody — you hold the key";
+  display: block;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--cf-muted);
+}
+.balance .symbol { font-size: 16px; color: var(--cf-muted); font-weight: 400; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; padding: 3px 8px; border-radius: 999px;
+  border: 1px solid var(--cf-line); background: var(--cf-panel-2); color: var(--cf-muted);
+}
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--cf-line); margin: 0 0 14px; }
+.tabs button { border: none; background: none; border-radius: 0; border-bottom: 2px solid transparent; padding: 8px 10px; color: var(--cf-muted); }
+.tabs button[aria-selected="true"] { color: var(--cf-fg); border-bottom-color: var(--cf-ember); }
+
+/* --- Warnings. Deliberately not styled like the rest of the product. ------ *
+ * §6: "the seed-phrase screen, the phishing warning, the approval warning — deliberately distinct
+ * from the friendly onboarding style, because a warning that looks like an illustration gets
+ * clicked through." Square corners, a hard rule, no gradient. */
+.warn {
+  border-left: 4px solid var(--cf-caution);
+  background: rgba(240, 160, 44, 0.08);
+  border-radius: 0;
+  padding: 10px 12px;
+  margin: 0 0 8px;
+}
+.warn.danger { border-left-color: var(--cf-danger); background: rgba(229, 72, 77, 0.1); }
+.warn strong { display: block; font-size: 13px; margin-bottom: 2px; color: var(--cf-fg); }
+.warn span { font-size: 12px; color: var(--cf-muted); }
+
+.origin {
+  font-family: var(--cf-mono);
+  font-size: 13px;
+  color: var(--cf-fg);
+  background: var(--cf-panel-2);
+  border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-sm);
+  padding: 6px 8px;
+  word-break: break-all;
+}
+
+.seed { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.seed .word {
+  font-family: var(--cf-mono); font-size: 13px;
+  background: var(--cf-panel-2); border: 1px solid var(--cf-line);
+  border-radius: var(--cf-radius-sm); padding: 7px 8px;
+}
+.seed .word b { color: var(--cf-muted); font-weight: 400; margin-right: 6px; font-size: 11px; }
+.seed.hidden .word { color: transparent; text-shadow: 0 0 9px var(--cf-fg); user-select: none; }
+
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { padding: 10px 0; border-bottom: 1px solid var(--cf-line); }
+.list li:last-child { border-bottom: none; }
+
+.error { color: var(--cf-danger); font-size: 12px; margin: 8px 0 0; }
+.ok { color: var(--cf-self-custody); font-size: 12px; margin: 8px 0 0; }
+.muted { color: var(--cf-muted); font-size: 12px; }
+
+.qr { width: 190px; height: 190px; background: #f5efe8; border-radius: var(--cf-radius); }
+
+.placeholder-asset {
+  display: flex; align-items: center; justify-content: center;
+  border: 1px dashed var(--cf-line); border-radius: var(--cf-radius);
+  color: var(--cf-muted); font-size: 11px; padding: 18px; text-align: center;
+}

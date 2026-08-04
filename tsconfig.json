@@ -1,0 +1,38 @@
+{
+  // Estate convention (micro-runtime/tsconfig.base.json) with the additions an extension needs.
+  //
+  // `lib` CARRIES "DOM" HERE AND DELIBERATELY DOES NOT IN THE CORE. micro-hearth-wallet-core
+  // compiles with ES2023 alone so that a platform dependency cannot creep into a library that must
+  // run in a Tauri webview, a React Native JS context and an MV3 service worker unmodified. This
+  // repository is the opposite end of that arrangement: it IS the platform. It reaches for
+  // `crypto.getRandomValues`, `chrome.storage`, `fetch` and the DOM on purpose, and hiding those
+  // types would only mean writing `as any` at every one of them.
+  //
+  // "WebWorker" is in the list for the service worker, which has `self`, `clients` and no `window`.
+  // TypeScript cannot express "this file is a worker and that file is a page" in one program, so
+  // both libraries are loaded and src/background/** is kept honest by review and by the fact that
+  // it is bundled and executed as a worker in the end-to-end suite — where touching `window` is a
+  // ReferenceError, not a type error.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable", "WebWorker"],
+    "types": ["chrome"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "jsx": "react-jsx",
+    "noEmit": true
+  },
+  "include": ["src"]
+}

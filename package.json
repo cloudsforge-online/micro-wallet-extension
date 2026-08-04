@@ -1,0 +1,45 @@
+{
+  "name": "@cloudsforge/wallet-extension",
+  "version": "1.0.0",
+  "private": true,
+  "description": "CloudsForge's self-custody wallet for Chrome, Firefox, Opera and Edge — EIP-1193, EIP-6963, EIP-3085/3326 over MV3.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cloudsforge-online/micro-wallet-extension.git"
+  },
+  "//core": "@cloudsforge/hearth-wallet-core is consumed from the sibling checkout because it is not published yet — the same arrangement micro-hub-web has with @cloudsforge/ui, and it becomes '^1.0.0' the day the core is published with nothing else here changing. `link:` rather than `file:` is deliberate: link: symlinks the working tree so a fix in the signing core is visible here immediately, whereas pnpm PACKS a file: directory and the packed copy goes stale the moment the core is touched. Three clients depending on divergent copies of a signer is the worst failure this design can have (25-wallet-clients.md §3), and a stale pack is exactly how that starts.",
+  "//ui": "There is no @cloudsforge/ui dependency, and that is a decision rather than an oversight. The design system is PRIVATE, so consuming it would put a secrets.ESTATE_READ_TOKEN checkout in front of every CI run of a wallet that is otherwise entirely public and self-contained; its components are laid out for 1200px app chrome rather than a 360px popup; and it needs a test loader to survive the second React realpath that `link:` creates. The brand is carried instead by src/ui/tokens.css, whose values are copied from micro-ui's tokens.css and cited line by line there.",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "build": "node tools/build.js",
+    "build:firefox": "node tools/build.js --target=firefox",
+    "build:all": "node tools/build.js && node tools/build.js --target=firefox",
+    "package": "node tools/package.js",
+    "test": "node --import tsx --test test/*.test.ts",
+    "//test:e2e": "--test-concurrency=1 because each file launches its own Chromium with its own user-data directory and its own unpacked extension; run in parallel they contend for the same Hearth node's nonces and for the machine's memory. The timeout is generous because these tests wait on real block times, a real 600,000-iteration PBKDF2 unlock, and a real service-worker restart — none of which are worth making flaky to save a minute.",
+    "test:e2e": "node --import tsx --test --test-concurrency=1 --test-timeout=180000 test/e2e/*.test.ts",
+    "check": "pnpm typecheck && pnpm build:all && pnpm test"
+  },
+  "dependencies": {
+    "@cloudsforge/hearth-wallet-core": "link:../hearth-wallet-core",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "esbuild": "^0.24.2",
+    "jsqr": "^1.4.0",
+    "playwright-core": "^1.49.1",
+    "tsx": "4.23.1",
+    "typescript": "^5.7.2"
+  }
+}

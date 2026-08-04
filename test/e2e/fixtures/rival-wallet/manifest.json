@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Rival Wallet (test fixture)",
+  "version": "1.0.0",
+  "description": "A stand-in for MetaMask: takes window.ethereum at document_start and announces over EIP-6963. It exists so the coexistence test has something real to coexist with.",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["inpage.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ]
+}

@@ -1,0 +1,185 @@
+name: CI
+
+# A browser extension: it serves no /livez, owns no database and ships no container, so
+# micro-org/service-ci.yml — whose rules assert exactly those things — does not fit, and forcing it
+# through would mean weakening the rules for everyone else. This is the shape micro-contracts and
+# micro-hearth-wallet-core settled on for a non-service, plus the one thing this repository needs
+# that neither of them does: a real browser and a real chain.
+#
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+# THE `browser` JOB IS THE POINT OF THIS FILE, AND IT IS ALLOWED TO BE SLOW.
+#
+# This estate shipped 314 specified browser scenarios and a green CI suite while sign-in was broken
+# for every user, because every frontend harness called `page.route('**/*', …)` and answered its own
+# requests from fixtures. So the browser job here starts an actual Hearth node, mines actual blocks,
+# loads the actual unpacked extension into an actual Chromium, and reads an actual balance. There is
+# no mock in it and there is no `continue-on-error` on it.
+#
+# It also does not skip when the node is missing: test/e2e/harness.ts FAILS with a message naming
+# what to start. A job that goes green because its subject was absent is the defect this estate has
+# spent a night unpicking.
+# ────────────────────────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Typecheck, build, unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: wallet-extension }
+
+      # The signing core, consumed as `link:../hearth-wallet-core`. It is PUBLIC, so the job token
+      # reaches it without a secret — which is also why this repository does not depend on
+      # @cloudsforge/ui, whose repository is private and would put a secret in front of every run.
+      # The checkout path matches the specifier in package.json exactly; a rename of either breaks
+      # `pnpm install` loudly rather than resolving to something else.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-hearth-wallet-core
+          path: hearth-wallet-core
+
+      # `package_json_file` IS REQUIRED because this job checks out TWO repositories side by side,
+      # so the workspace root — where the action looks by default — holds no package.json at all.
+      # Left off, it fails with "No pnpm version is specified".
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: wallet-extension/package.json }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: wallet-extension/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: wallet-extension
+
+      - run: pnpm typecheck
+        working-directory: wallet-extension
+
+      # Both targets. `pnpm build:all` is what proves "one source, two manifests" is still true —
+      # test/bundle.test.ts then asserts the two builds' JavaScript is byte-identical.
+      - run: pnpm build:all
+        working-directory: wallet-extension
+
+      - run: pnpm test
+        working-directory: wallet-extension
+
+      - name: Report what the icons came from
+        working-directory: wallet-extension
+        run: |
+          # Loud rather than silent: the build falls back to generated placeholders when
+          # micro-wallet-assets has not published the extension set yet, and a placeholder icon that
+          # nobody notices is a store rejection discovered at submission.
+          node tools/build.js | tee /dev/stderr | grep -q PLACEHOLDER \
+            && echo "::warning::shipping placeholder icons — micro-wallet-assets has no assets/extension/ yet" \
+            || echo "using generated assets from micro-wallet-assets"
+
+  browser:
+    name: Real Chromium against a real Hearth node
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: wallet-extension }
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-hearth-wallet-core
+          path: hearth-wallet-core
+
+      # `hearth` is checked out for TWO reasons, and both matter:
+      #   1. `node/bin/hearthd.js` is started below as the chain under test;
+      #   2. `node/src/chain/transaction.js` is the ORACLE that recovers the sender from the
+      #      signature this wallet produced. The live node cannot answer that question — a
+      #      deliberately corrupted signature produces the byte-identical "insufficient funds"
+      #      refusal, because it recovers to a different address that is also empty. Measured, not
+      #      assumed. See test/e2e/wallet.test.ts.
+      # `node/` declares no dependencies of its own, so there is nothing to install for it.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/hearth
+          path: hearth
+
+      - uses: pnpm/action-setup@v4
+        with: { package_json_file: wallet-extension/package.json }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: wallet-extension/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+        working-directory: wallet-extension
+
+      # playwright-core is used rather than playwright precisely so that no postinstall script
+      # downloads a browser behind anybody's back. The download is this step, where it can be seen.
+      - name: Install Chromium
+        working-directory: wallet-extension
+        run: pnpm exec playwright-core install --with-deps chromium
+
+      - run: pnpm build
+        working-directory: wallet-extension
+
+      # A single mining node on chain 7412, on the port the wallet's built-in testnet record names.
+      # No peers, so it forms its own chain and cannot reach anything else. `--mine` is required:
+      # the suite reads a NON-ZERO balance, and with no premine in Hearth's genesis (genesis.js: "NO
+      # PREMINE") the only funded address on a fresh chain is a coinbase.
+      - name: Start a Hearth node
+        run: |
+          mkdir -p "$RUNNER_TEMP/hearth-data"
+          HEARTH_NETWORK=hearth-testnet \
+          HEARTH_EVM=1 \
+          HEARTH_MINE=1 \
+          HEARTH_THROTTLE=0.9 \
+          HEARTH_DATA="$RUNNER_TEMP/hearth-data" \
+          HEARTH_JSONRPC=8545 \
+          HEARTH_RPC=8645 \
+          HEARTH_P2P=8646 \
+          node hearth/node/bin/hearthd.js > "$RUNNER_TEMP/hearth.log" 2>&1 &
+          echo "started"
+
+      - name: Wait until it has mined something to read
+        run: |
+          set -uo pipefail
+          for i in $(seq 1 90); do
+            height=$(curl -s -m 2 -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber"}' http://127.0.0.1:8545 \
+              | sed -n 's/.*"result":"\(0x[0-9a-f]*\)".*/\1/p') || true
+            if [ -n "${height:-}" ] && [ "$height" != "0x0" ]; then
+              echo "chain is at $height after ${i}s"
+              curl -s -X POST -H 'content-type: application/json' \
+                --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId"}' http://127.0.0.1:8545
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the Hearth node never mined a block"
+          cat "$RUNNER_TEMP/hearth.log"
+          exit 1
+
+      - name: Drive the extension in a real browser
+        working-directory: wallet-extension
+        env:
+          HEARTH_NODE_SRC: ${{ github.workspace }}/hearth/node/src
+        run: pnpm test:e2e
+
+      - name: The node's log, whatever happened
+        if: always()
+        run: tail -60 "$RUNNER_TEMP/hearth.log" || true
+
+  hygiene:
+    uses: cloudsforge-online/micro-org/.github/workflows/secret-hygiene.yml@main
+    with:
+      # This repository ships no container. It ships a .crx and an .xpi.
+      require-dockerignore: false
+    permissions:
+      contents: read
