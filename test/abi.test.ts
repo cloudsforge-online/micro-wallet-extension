@@ -20,9 +20,10 @@
  */
 
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import test, { describe } from 'node:test';
 
 import { keccak256, toHex, utf8ToBytes } from '@cloudsforge/hearth-wallet-core';
@@ -32,19 +33,69 @@ import {
 } from '../src/shared/abi.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const MINT_EVM = resolve(here, '..', '..', 'mint', 'src', 'evm.ts');
+const MINT_SRC = process.env['MINT_SRC'] ?? resolve(here, '..', '..', 'mint', 'src');
+const MINT_EVM = join(MINT_SRC, 'evm.ts');
 
 if (!existsSync(MINT_EVM)) {
   throw new Error(
     `The ABI suite is checked against micro-mint's own encoder and cannot find it at ${MINT_EVM}.\n`
-    + 'micro-mint is a PUBLIC repository — clone it beside this checkout as `mint`.\n'
+    + 'micro-mint is a PUBLIC repository — clone it beside this checkout as `mint`, or set MINT_SRC.\n'
     + 'This suite does not skip when its oracle is absent: a differential test with one side missing is not a test.',
   );
 }
-const mint = await import(MINT_EVM) as {
+
+/**
+ * Load micro-mint's encoder with its two imports shimmed, and PROVE nothing else was touched.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ * WHY A SHIM AT ALL. `mint/src/evm.ts` imports exactly two things: `keccak256` from a self-contained
+ * `./keccak.ts`, and `ChainError` from `./chains.ts` — and `chains.ts` pulls
+ * `@cloudsforge/contracts-chain`, a package that lives in micro-mint's node_modules. On this laptop
+ * that resolves, because the sibling checkout has its dependencies installed. IN CI IT DOES NOT,
+ * and the first run of this suite failed with ERR_MODULE_NOT_FOUND on a package that has nothing to
+ * do with ABI encoding. Installing micro-mint's tree to get it would need a registry token, and
+ * this repository is deliberately public and secret-free.
+ *
+ * So the two import lines are rewritten — `keccak256` to an absolute path into micro-mint's own
+ * file, `ChainError` to the six-line class copied from micro-mint's own `chains.ts` — and NOTHING
+ * ELSE IS. The assertion below is what makes that a fact rather than an intention: the shimmed text
+ * with the substitution reversed must be byte-identical to the file on disk. If a future edit here
+ * ever touched the encoder itself, the oracle would have become a copy of the thing it checks, and
+ * this stops that silently happening.
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ */
+function loadMintEncoder(): Promise<{
   encodeConstructorArgs: (args: readonly { type: string; value: unknown }[]) => Buffer;
   creationData: (bytecode: string, args: readonly { type: string; value: unknown }[]) => string;
-};
+}> {
+  const original = readFileSync(MINT_EVM, 'utf8');
+
+  const keccakFrom = "import { keccak256 } from './keccak.ts'";
+  const chainFrom = "import { ChainError } from './chains.ts'";
+  for (const line of [keccakFrom, chainFrom]) {
+    assert.ok(original.includes(line), `micro-mint's evm.ts no longer contains \`${line}\`; the shim is stale`);
+  }
+
+  const keccakTo = `import { keccak256 } from ${JSON.stringify(pathToFileURL(join(MINT_SRC, 'keccak.ts')).href)}`;
+  // Copied verbatim from mint/src/chains.ts:110-115.
+  const chainTo = 'class ChainError extends Error {\n  constructor(message: string) {\n    super(message)\n    this.name = \'ChainError\'\n  }\n}';
+
+  const shimmed = original.replace(keccakFrom, keccakTo).replace(chainFrom, chainTo);
+
+  // THE PROOF: undo the substitution and the file must come back exactly.
+  assert.equal(
+    shimmed.replace(keccakTo, keccakFrom).replace(chainTo, chainFrom),
+    original,
+    'the shim changed something other than the two import lines — this oracle is no longer micro-mint\'s encoder',
+  );
+
+  const directory = mkdtempSync(join(tmpdir(), 'cf-mint-oracle-'));
+  const file = join(directory, 'evm.ts');
+  writeFileSync(file, shimmed);
+  return import(pathToFileURL(file).href) as never;
+}
+
+const mint = await loadMintEncoder();
 
 /** The types both encoders support. `uint16`, `uint64` and `bytes32` are ours alone and are
  *  checked against hand-derived layouts below instead. */

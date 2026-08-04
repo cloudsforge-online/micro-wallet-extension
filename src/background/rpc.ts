@@ -72,6 +72,102 @@ export async function rpc(chain: ChainRecord, method: string, params: readonly u
   return envelope.result;
 }
 
+/**
+ * Many calls, one HTTP request — and a fallback for nodes that will not.
+ *
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ * WHY THIS EXISTS, MEASURED RATHER THAN ASSUMED.
+ *
+ * Reading a ForesightMarket whole is nineteen `eth_call`s. Done one at a time they were nineteen
+ * HTTP round trips, and the first CI run of the phase-5 suite TIMED OUT on them: the job's node
+ * mines with `HEARTH_THROTTLE=0.9`, so its JSON-RPC server is starved most of the time and each
+ * round trip cost seconds. contracts.ts had a comment claiming sequential was the safe choice
+ * because concurrent calls make a single node flaky. That was speculation, and CI falsified it in
+ * the opposite direction.
+ *
+ * Batching is the right fix rather than concurrency: it is ONE request, so it cannot contend with
+ * itself, and every call in it is answered from the same node in one pass. The pinned-block
+ * guarantee is untouched — the block tag is still in every element.
+ *
+ * THE FALLBACK IS NOT OPTIONAL. This wallet follows the user to whatever RPC they add (§5), and
+ * batching is a part of JSON-RPC that a node may legitimately not implement. A node that answers a
+ * batch with a single object, an error, or the wrong number of results gets the sequential path
+ * instead — slower, and correct. Silently returning short would be far worse: it would present as
+ * a market whose pools read zero.
+ * ────────────────────────────────────────────────────────────────────────────────────────────────
+ */
+export async function rpcBatch(
+  chain: ChainRecord,
+  calls: readonly { method: string; params: readonly unknown[] }[],
+): Promise<unknown[]> {
+  if (calls.length === 0) return [];
+  if (calls.length === 1) return [await rpc(chain, calls[0]!.method, calls[0]!.params)];
+
+  const base = nextId;
+  nextId += calls.length;
+  const body = JSON.stringify(calls.map((call, i) => ({
+    jsonrpc: '2.0', id: base + i, method: call.method, params: call.params,
+  })));
+
+  let payload: unknown;
+  try {
+    const response = await fetch(chain.rpcUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    payload = await response.json();
+  } catch {
+    return sequential(chain, calls);
+  }
+
+  if (!Array.isArray(payload) || payload.length !== calls.length) {
+    // Not a batch answer. Rather than guess at which element is missing, ask again one at a time —
+    // the answers must be right, and being slower is the acceptable cost of that.
+    return sequential(chain, calls);
+  }
+
+  // The spec permits any order, so results are matched by id rather than by position. A node that
+  // returns them shuffled and a reader that assumes position would put the YES pool in the NO slot.
+  const byId = new Map<number, { error?: unknown; result?: unknown }>();
+  for (const entry of payload) {
+    if (typeof entry !== 'object' || entry === null) return sequential(chain, calls);
+    const element = entry as { id?: unknown; error?: unknown; result?: unknown };
+    if (typeof element.id !== 'number') return sequential(chain, calls);
+    byId.set(element.id, element);
+  }
+
+  const out: unknown[] = [];
+  for (let i = 0; i < calls.length; i += 1) {
+    const element = byId.get(base + i);
+    if (element === undefined) return sequential(chain, calls);
+    if (element.error !== undefined && element.error !== null) {
+      const err = element.error as { code?: unknown; message?: unknown };
+      throw new ProviderError(
+        typeof err.code === 'number' ? err.code : INTERNAL_ERROR,
+        typeof err.message === 'string' ? err.message : `${calls[i]!.method} failed`,
+      );
+    }
+    if (!('result' in element)) {
+      throw new ProviderError(INTERNAL_ERROR, `${chain.name} answered ${calls[i]!.method} with neither a result nor an error.`);
+    }
+    out.push(element.result);
+  }
+  return out;
+}
+
+async function sequential(
+  chain: ChainRecord,
+  calls: readonly { method: string; params: readonly unknown[] }[],
+): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for (const call of calls) out.push(await rpc(chain, call.method, call.params));
+  return out;
+}
+
 export async function getBalance(chain: ChainRecord, address: string): Promise<bigint> {
   return fromQuantity(await rpc(chain, 'eth_getBalance', [address, 'latest']), 'eth_getBalance');
 }
@@ -174,29 +270,50 @@ export async function recentHistory(chain: ChainRecord, address: string, depth =
   const wanted = address.toLowerCase();
   const entries: HistoryEntry[] = [];
 
-  for (let n = tip; n >= from; n -= 1n) {
-    const block = await rpc(chain, 'eth_getBlockByNumber', [toQuantity(n), true]);
-    if (typeof block !== 'object' || block === null) continue;
-    const b = block as { transactions?: unknown; timestamp?: unknown; number?: unknown };
-    if (!Array.isArray(b.transactions)) continue;
-    const timestamp = typeof b.timestamp === 'string' ? Number(fromQuantity(b.timestamp, 'block.timestamp')) : 0;
-    for (const raw of b.transactions) {
-      if (typeof raw !== 'object' || raw === null) continue;
-      const tx = raw as Record<string, unknown>;
-      const txFrom = typeof tx['from'] === 'string' ? tx['from'].toLowerCase() : '';
-      const txTo = typeof tx['to'] === 'string' ? tx['to'].toLowerCase() : null;
-      if (txFrom !== wanted && txTo !== wanted) continue;
-      entries.push({
-        hash: typeof tx['hash'] === 'string' ? tx['hash'] : '0x',
-        from: typeof tx['from'] === 'string' ? tx['from'] : '0x',
-        to: typeof tx['to'] === 'string' ? tx['to'] : null,
-        valueWei: fromQuantity(tx['value'] ?? '0x0', 'tx.value').toString(),
-        blockNumber: Number(n),
-        timestamp,
-        direction: txFrom === wanted && txTo === wanted ? 'self' : txFrom === wanted ? 'out' : 'in',
-      });
+  // Batched, in windows, rather than one HTTP round trip per block. Walking 100 blocks one at a
+  // time is 100 round trips, and on a node mining at HEARTH_THROTTLE=0.9 that is slow enough for
+  // the activity screen to time out — which CI demonstrated. The window is bounded because a batch
+  // of 100 blocks WITH FULL TRANSACTION BODIES is a large response to hold in a service worker,
+  // and a worker that is killed for memory loses the whole read rather than one window of it.
+  const WINDOW = 20;
+  for (let n = tip; n >= from; n -= BigInt(WINDOW)) {
+    const numbers: bigint[] = [];
+    for (let i = 0; i < WINDOW; i += 1) {
+      const at = n - BigInt(i);
+      if (at < from) break;
+      numbers.push(at);
     }
-    if (n === 0n) break;
+    if (numbers.length === 0) break;
+
+    const blocks = await rpcBatch(chain, numbers.map((at) => ({
+      method: 'eth_getBlockByNumber',
+      params: [toQuantity(at), true],
+    })));
+
+    for (const [index, block] of blocks.entries()) {
+      const at = numbers[index]!;
+      if (typeof block !== 'object' || block === null) continue;
+      const b = block as { transactions?: unknown; timestamp?: unknown; number?: unknown };
+      if (!Array.isArray(b.transactions)) continue;
+      const timestamp = typeof b.timestamp === 'string' ? Number(fromQuantity(b.timestamp, 'block.timestamp')) : 0;
+      for (const raw of b.transactions) {
+        if (typeof raw !== 'object' || raw === null) continue;
+        const tx = raw as Record<string, unknown>;
+        const txFrom = typeof tx['from'] === 'string' ? tx['from'].toLowerCase() : '';
+        const txTo = typeof tx['to'] === 'string' ? tx['to'].toLowerCase() : null;
+        if (txFrom !== wanted && txTo !== wanted) continue;
+        entries.push({
+          hash: typeof tx['hash'] === 'string' ? tx['hash'] : '0x',
+          from: typeof tx['from'] === 'string' ? tx['from'] : '0x',
+          to: typeof tx['to'] === 'string' ? tx['to'] : null,
+          valueWei: fromQuantity(tx['value'] ?? '0x0', 'tx.value').toString(),
+          blockNumber: Number(at),
+          timestamp,
+          direction: txFrom === wanted && txTo === wanted ? 'self' : txFrom === wanted ? 'out' : 'in',
+        });
+      }
+    }
+    if (numbers[numbers.length - 1] === 0n) break;
   }
   return { entries, scannedFrom: Number(from), scannedTo: Number(tip) };
 }

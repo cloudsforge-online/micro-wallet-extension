@@ -179,8 +179,19 @@ export async function startRecordingProxy(): Promise<RecordingProxy> {
       void (async (): Promise<void> => {
         const body = Buffer.concat(chunks).toString('utf8');
         try {
-          const parsed = JSON.parse(body) as { method: string; params?: unknown[] };
-          seen.push({ method: parsed.method, params: parsed.params ?? [] });
+          // BATCHES ARE UNROLLED, and this is not a detail. Once background/rpc.ts gained
+          // `rpcBatch`, a market read went out as ONE request whose body is an array — and a
+          // recorder that only reads a top-level `.method` saw a single call with `method:
+          // undefined`. The assertions built on `proxy.seen` did not fail loudly; they quietly
+          // stopped being able to observe anything, which is the exact shape of guard failure this
+          // suite exists to avoid. The foresight suite's "the wallet never called the contract"
+          // caught it, and this is the fix.
+          const parsed = JSON.parse(body) as
+            | { method: string; params?: unknown[] }
+            | { method: string; params?: unknown[] }[];
+          for (const call of Array.isArray(parsed) ? parsed : [parsed]) {
+            seen.push({ method: call.method, params: call.params ?? [] });
+          }
         } catch { /* not JSON — forward it anyway and let the node object */ }
         const upstream = await fetch(RPC_URL, {
           method: 'POST',

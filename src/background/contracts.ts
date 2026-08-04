@@ -3,14 +3,15 @@
  * ────────────────────────────────────────────────────────────────────────────────────────────────
  * EVERY READ IN THIS FILE IS PINNED TO ONE BLOCK, AND THAT IS THE POINT OF THE FILE.
  *
- * `readMarket` makes fourteen `eth_call`s. At `latest` they would be fourteen reads of a chain that
- * mines every couple of seconds, and a stake landing between calls three and four produces a screen
- * where the pool totals do not add up to the total and the odds match neither. Worse, it produces a
+ * `readMarket` needs twenty `eth_call`s. At `latest` they would be twenty reads of a chain that
+ * mines every couple of seconds, and a stake landing between the third and the fourth produces a
+ * screen where the pools do not add up to the total and the odds match neither. Worse, it produces a
  * CONFIRMATION whose odds were read at a different moment from its pool — which is precisely the
  * dishonesty §5.1 exists to forbid, arrived at by accident instead of on purpose.
  *
- * So: one `eth_blockNumber`, then every call tagged with that number, and the block's own timestamp
- * read from the same block. The observation that comes out describes one moment and says which.
+ * So: one `eth_blockNumber`, then every call tagged with that number in a SINGLE batched request,
+ * and the block's own timestamp read from the same block. The observation that comes out describes
+ * one moment and says which.
  * ────────────────────────────────────────────────────────────────────────────────────────────────
  *
  * §7 applies throughout: the node is hostile input. Nothing here reaches into a response without
@@ -32,7 +33,7 @@ import { INTERNAL_ERROR, INVALID_PARAMS, ProviderError } from '../shared/errors.
 import { fromQuantity, toQuantity } from '../shared/units.ts';
 import { ARTEFACTS, MINT_SOURCE_SHA256 } from './templates.generated.ts';
 import type { ChainRecord } from './storage.ts';
-import { rpc } from './rpc.ts';
+import { rpc, rpcBatch } from './rpc.ts';
 
 export { MINT_SOURCE_SHA256 };
 
@@ -79,21 +80,97 @@ export async function readMarket(
   const market = requireAddress(address, 'The market address');
   const block = await pinBlock(chain);
 
-  const read = async (signature: string, args: readonly AbiValue[] = []): Promise<Return> => {
-    const data = encodeCall(signature, args);
-    return new Return(await ethCall(chain, market, data, block.tag), `${signature} on ${market}`);
+  /**
+   * Every view this screen needs, in ONE request.
+   *
+   * The whole record has to describe one moment or the numbers on a stake screen are fiction, so
+   * the block tag is pinned into every element. Nineteen separate round trips was the first
+   * implementation and CI timed out on it against a node mining at `HEARTH_THROTTLE=0.9`; see
+   * rpc.ts's `rpcBatch`, which falls back to one-at-a-time for a node that will not batch.
+   *
+   * The resolved-only and viewer-only views are requested unconditionally and simply ignored when
+   * they do not apply. `winningOutcome()` and `resolvedAt()` answer 0 on an open market rather than
+   * reverting, and a second round trip to save two words of an answer already in flight would cost
+   * more than it saves.
+   */
+  const plan: { signature: string; args: readonly AbiValue[] }[] = [
+    MARKET_SIGNATURES.status,
+    MARKET_SIGNATURES.total,
+    MARKET_SIGNATURES.distributable,
+    MARKET_SIGNATURES.feeAmount,
+    MARKET_SIGNATURES.feeBps,
+    MARKET_SIGNATURES.closeTime,
+    MARKET_SIGNATURES.disputeWindowSeconds,
+    MARKET_SIGNATURES.questionHash,
+    MARKET_SIGNATURES.oracle,
+    MARKET_SIGNATURES.treasury,
+    MARKET_SIGNATURES.claimableFrom,
+    MARKET_SIGNATURES.winningOutcome,
+    MARKET_SIGNATURES.resolvedAt,
+  ].map((signature) => ({ signature, args: [] as readonly AbiValue[] }));
+
+  plan.push(
+    { signature: MARKET_SIGNATURES.pool, args: [{ type: 'uint256', value: BigInt(OUTCOME_YES) }] },
+    { signature: MARKET_SIGNATURES.pool, args: [{ type: 'uint256', value: BigInt(OUTCOME_NO) }] },
+    { signature: MARKET_SIGNATURES.oddsBps, args: [{ type: 'uint8', value: BigInt(OUTCOME_YES) }] },
+    { signature: MARKET_SIGNATURES.oddsBps, args: [{ type: 'uint8', value: BigInt(OUTCOME_NO) }] },
+  );
+  if (viewer !== null) {
+    plan.push(
+      { signature: MARKET_SIGNATURES.stakeOf, args: [{ type: 'address', value: viewer }] },
+      { signature: MARKET_SIGNATURES.payoutOf, args: [{ type: 'address', value: viewer }] },
+      { signature: MARKET_SIGNATURES.claimed, args: [{ type: 'address', value: viewer }] },
+    );
+  }
+
+  const answers = await rpcBatch(chain, plan.map((call) => ({
+    method: 'eth_call',
+    params: [{ to: market, data: encodeCall(call.signature, call.args) }, block.tag],
+  })));
+
+  let cursor = 0;
+  const next = (): Return => {
+    const call = plan[cursor];
+    if (call === undefined) throw new ProviderError(INTERNAL_ERROR, 'readMarket: read past the end of its own plan');
+    const answer = new Return(answers[cursor], `${call.signature} on ${market}`);
+    cursor += 1;
+    return answer;
   };
 
-  // Sequential rather than Promise.all: Hearth's JSON-RPC is a single node on a laptop or in a
-  // container, and fourteen simultaneous eth_calls is how a read starts intermittently timing out
-  // for reasons that look like a wallet bug. They are all at the same pinned block, so the order
-  // they arrive in changes nothing.
-  const statusCode = (await read(MARKET_SIGNATURES.status)).small(0, 8, 'status()');
-  const status = statusFromCode(statusCode);
+  const status = statusFromCode(next().small(0, 8, 'status()'));
+  const total = next().uint(0, 'total()');
+  const distributable = next().uint(0, 'distributable()');
+  const feeAmount = next().uint(0, 'feeAmount()');
+  const feeBps = next().small(0, 16, 'feeBps()');
+  const closeTime = next().small(0, 64, 'closeTime()');
+  const disputeWindowSeconds = next().small(0, 64, 'disputeWindowSeconds()');
+  const questionHash = next().bytes32(0, 'questionHash()');
+  const oracle = next().address(0, 'oracle()');
+  const treasury = next().address(0, 'treasury()');
+  const claimableFromRaw = next().small(0, 64, 'claimableFrom()');
+  const winningOutcomeRaw = next().small(0, 8, 'winningOutcome()');
+  const resolvedAtRaw = next().small(0, 64, 'resolvedAt()');
+  const poolYes = next().uint(0, 'pool(0)');
+  const poolNo = next().uint(0, 'pool(1)');
+  const oddsYes = next().small(0, 16, 'oddsBps(0)');
+  const oddsNo = next().small(0, 16, 'oddsBps(1)');
 
-  const poolYes = (await read(MARKET_SIGNATURES.pool, [{ type: 'uint256', value: BigInt(OUTCOME_YES) }])).uint(0, 'pool(0)');
-  const poolNo = (await read(MARKET_SIGNATURES.pool, [{ type: 'uint256', value: BigInt(OUTCOME_NO) }])).uint(0, 'pool(1)');
-  const total = (await read(MARKET_SIGNATURES.total)).uint(0, 'total()');
+  let myYes = 0n;
+  let myNo = 0n;
+  let myPayout = 0n;
+  let myClaimed = false;
+  if (viewer !== null) {
+    const stakes = next();
+    myYes = stakes.uint(0, 'stakeOf().yes');
+    myNo = stakes.uint(1, 'stakeOf().no');
+    myPayout = next().uint(0, 'payoutOf()');
+    myClaimed = next().bool(0, 'claimed()');
+  }
+
+  // Only meaningful once resolved: on an open market these answer 0, which is not an outcome.
+  const winningOutcome = status === 'resolved' ? winningOutcomeRaw : null;
+  const resolvedAt = status === 'resolved' ? resolvedAtRaw : null;
+
   if (poolYes + poolNo !== total) {
     // Two reads at the same block that do not agree means this is not a ForesightMarket, or the
     // node is not answering from one state. Either way the numbers on a stake screen would be
@@ -103,37 +180,6 @@ export async function readMarket(
       `${market} answered pool(0)+pool(1) = ${poolYes + poolNo} but total() = ${total} at block ${block.number}. `
       + 'Those cannot both be true of one contract at one block, so this wallet will not draw a screen from them.',
     );
-  }
-
-  const oddsYes = (await read(MARKET_SIGNATURES.oddsBps, [{ type: 'uint8', value: BigInt(OUTCOME_YES) }])).small(0, 16, 'oddsBps(0)');
-  const oddsNo = (await read(MARKET_SIGNATURES.oddsBps, [{ type: 'uint8', value: BigInt(OUTCOME_NO) }])).small(0, 16, 'oddsBps(1)');
-  const distributable = (await read(MARKET_SIGNATURES.distributable)).uint(0, 'distributable()');
-  const feeAmount = (await read(MARKET_SIGNATURES.feeAmount)).uint(0, 'feeAmount()');
-  const feeBps = (await read(MARKET_SIGNATURES.feeBps)).small(0, 16, 'feeBps()');
-  const closeTime = (await read(MARKET_SIGNATURES.closeTime)).small(0, 64, 'closeTime()');
-  const disputeWindowSeconds = (await read(MARKET_SIGNATURES.disputeWindowSeconds)).small(0, 64, 'disputeWindowSeconds()');
-  const questionHash = (await read(MARKET_SIGNATURES.questionHash)).bytes32(0, 'questionHash()');
-  const oracle = (await read(MARKET_SIGNATURES.oracle)).address(0, 'oracle()');
-  const treasury = (await read(MARKET_SIGNATURES.treasury)).address(0, 'treasury()');
-  const claimableFromRaw = (await read(MARKET_SIGNATURES.claimableFrom)).small(0, 64, 'claimableFrom()');
-
-  let winningOutcome: number | null = null;
-  let resolvedAt: number | null = null;
-  if (status === 'resolved') {
-    winningOutcome = (await read(MARKET_SIGNATURES.winningOutcome)).small(0, 8, 'winningOutcome()');
-    resolvedAt = (await read(MARKET_SIGNATURES.resolvedAt)).small(0, 64, 'resolvedAt()');
-  }
-
-  let myYes = 0n;
-  let myNo = 0n;
-  let myPayout = 0n;
-  let myClaimed = false;
-  if (viewer !== null) {
-    const stakes = await read(MARKET_SIGNATURES.stakeOf, [{ type: 'address', value: viewer }]);
-    myYes = stakes.uint(0, 'stakeOf().yes');
-    myNo = stakes.uint(1, 'stakeOf().no');
-    myPayout = (await read(MARKET_SIGNATURES.payoutOf, [{ type: 'address', value: viewer }])).uint(0, 'payoutOf()');
-    myClaimed = (await read(MARKET_SIGNATURES.claimed, [{ type: 'address', value: viewer }])).bool(0, 'claimed()');
   }
 
   return {

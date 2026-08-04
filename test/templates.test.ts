@@ -25,8 +25,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import test, { describe } from 'node:test';
 
 // tools/ is plain JavaScript with no declarations, so the shape is stated here. Importing the
@@ -40,8 +39,7 @@ import {
 } from '../src/shared/templates.ts';
 import { buildDeployment } from '../src/background/contracts.ts';
 
-const here = dirname(fileURLToPath(import.meta.url));
-const MINT_CATALOGUE = resolve(here, '..', '..', 'mint', 'src', 'catalogue.ts');
+const MINT_CATALOGUE = join(dirname(MINT_GENERATED as string), '..', 'catalogue.ts');
 
 if (!existsSync(MINT_GENERATED)) {
   throw new Error(
