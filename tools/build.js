@@ -49,18 +49,29 @@ mkdirSync(join(out, 'icons'), { recursive: true });
  * fallback is announced on stdout rather than being silent, because "the icon is a placeholder" is
  * exactly the kind of thing that ships.
  */
+// 25-wallet-clients.md §6 puts the mark in micro-wallet-assets, in both polarities, with the icon
+// sizes DERIVED by downscaling from a single master per polarity rather than generated per size —
+// "a diffusion model asked for the same mark nine times returns nine different marks, and an app
+// whose icon changes between sizes looks broken."
+//
+// Two shapes are accepted because the asset repository produces the masters first and derives the
+// per-store sets afterwards: an already-derived extension mark if there is one, and the 1024 master
+// otherwise. Most specific first.
 const ASSET_PATHS = [
-  // 25-wallet-clients.md §6, "Extension": the mark in both polarities plus the four raster sizes.
-  resolve(root, '..', 'wallet-assets', 'assets', 'extension', 'mark-light.svg'),
-  resolve(root, '..', 'wallet-assets', 'assets', 'mark', 'mark-light.svg'),
-];
+  ['assets/extension/mark-light.svg', 'image/svg+xml'],
+  ['assets/extension/icon-128.png', 'image/png'],
+  ['assets/mark/mark-light.svg', 'image/svg+xml'],
+  ['assets/mark/plate-light-1024x1024.png', 'image/png'],
+  ['assets/mark/glyph-1024x1024.png', 'image/png'],
+].map(([rel, mime]) => [resolve(root, '..', 'wallet-assets', rel), mime]);
+
 let icon = '';
-const foundMark = ASSET_PATHS.find((p) => existsSync(p));
+const foundMark = ASSET_PATHS.find(([p]) => existsSync(p));
 if (foundMark !== undefined) {
-  icon = `data:image/svg+xml;base64,${readFileSync(foundMark).toString('base64')}`;
-  console.log(`  mark:    ${foundMark}`);
+  icon = `data:${foundMark[1]};base64,${readFileSync(foundMark[0]).toString('base64')}`;
+  console.log(`  mark:    ${foundMark[0]}`);
 } else {
-  console.log('  mark:    PLACEHOLDER — micro-wallet-assets has no assets/extension/mark-light.svg yet.');
+  console.log('  mark:    PLACEHOLDER — micro-wallet-assets has published no mark yet.');
   console.log('           The EIP-6963 icon falls back to the lozenge in src/inpage/index.ts.');
 }
 
