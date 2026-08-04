@@ -130,11 +130,29 @@ export function Markets(props: { chain: WalletState['chains'][number]; address: 
       ) : null}
 
       <h2>Discovery</h2>
-      {/* The honest degradation, stated on the screen rather than in a release note. */}
-      <div className={discovery?.reachable === true ? 'panel' : 'warn'} data-testid="discovery-note">
-        <strong>{discovery === null ? 'Checking…' : discovery.configured ? (discovery.reachable ? 'A directory is configured' : 'The directory is not answering') : 'Off — this wallet is talking only to the chain'}</strong>
-        <span>{discovery?.note ?? ''}</span>
-      </div>
+      {/* The honest degradation, stated on the screen rather than in a release note.
+       *
+       * THE LOADING STATE HAS A DIFFERENT `data-testid` FROM THE LOADED ONE, deliberately. An
+       * earlier version rendered both through `discovery-note` and switched the text between them,
+       * which meant a test waiting for that element got it immediately — while it still said
+       * "Checking…" — and then asserted against the wrong string. Locally the worker answered in
+       * milliseconds so it never raced; in CI, where the service worker starts cold, it did. An
+       * element that is present in two states cannot be waited on, so there are two elements. */}
+      {discovery === null ? (
+        <div className="warn" data-testid="discovery-checking">
+          <strong>Checking…</strong>
+          <span>Asking the worker whether a directory is configured. Nothing on the screens below depends on the answer.</span>
+        </div>
+      ) : (
+        <div className={discovery.reachable ? 'panel' : 'warn'} data-testid="discovery-note">
+          <strong>
+            {discovery.configured
+              ? (discovery.reachable ? 'A directory is configured' : 'The directory is not answering')
+              : 'Off — this wallet is talking only to the chain'}
+          </strong>
+          <span>{discovery.note}</span>
+        </div>
+      )}
       {discovery !== null && discovery.markets.length > 0 ? (
         <ul className="list" data-testid="discovered-list">
           {discovery.markets.map((m) => (

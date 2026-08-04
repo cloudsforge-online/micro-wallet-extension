@@ -131,7 +131,10 @@ describe('Foresight: a position that survives the platform', () => {
 
     await popup.getByTestId('market-address').fill(market);
     await popup.getByTestId('market-open').click();
-    await popup.getByTestId('market-shown-address').waitFor({ timeout: 45_000 });
+    // `market-status` rather than `market-shown-address`: the address renders the moment the view
+    // mounts, the status only once the contract has been read. Waiting on the first and then
+    // reading the second is a race that loses on a cold service worker — which is how CI found it.
+    await popup.getByTestId('market-status').waitFor({ timeout: 45_000 });
 
     assert.equal((await popup.getByTestId('market-shown-address').innerText()).trim().toLowerCase(), market.toLowerCase());
     assert.equal((await popup.getByTestId('market-status').innerText()).trim(), 'open');
@@ -164,7 +167,10 @@ describe('Foresight: a position that survives the platform', () => {
       const popup = await openPopup(harness);
       await popup.getByTestId('tab-markets').click();
       await popup.getByTestId(`market-${market}`).click();
-      await popup.getByTestId('market-shown-address').waitFor({ timeout: 45_000 });
+      // `market-status` rather than `market-shown-address`: the address renders the moment the view
+    // mounts, the status only once the contract has been read. Waiting on the first and then
+    // reading the second is a race that loses on a cold service worker — which is how CI found it.
+    await popup.getByTestId('market-status').waitFor({ timeout: 45_000 });
 
       await popup.getByTestId('stake-yes').click();
       await popup.getByTestId('stake-amount').fill('1');
@@ -285,7 +291,10 @@ describe('Foresight: a position that survives the platform', () => {
 
     // …and it does. The full position, read with the directory down.
     await popup.getByTestId(`market-${market}`).click();
-    await popup.getByTestId('market-shown-address').waitFor({ timeout: 45_000 });
+    // `market-status` rather than `market-shown-address`: the address renders the moment the view
+    // mounts, the status only once the contract has been read. Waiting on the first and then
+    // reading the second is a race that loses on a cold service worker — which is how CI found it.
+    await popup.getByTestId('market-status').waitFor({ timeout: 45_000 });
     assert.match(await popup.getByTestId('my-yes').innerText(), /^1 EMBER$/);
     assert.match(await popup.getByTestId('pool-total').innerText(), /^1 EMBER$/);
     assert.equal((await popup.getByTestId('market-status').innerText()).trim(), 'open');
@@ -339,7 +348,10 @@ describe('Foresight: a position that survives the platform', () => {
     const popup = await openPopup(harness);
     await popup.getByTestId('tab-markets').click();
     await popup.getByTestId(`market-${market}`).click();
-    await popup.getByTestId('market-shown-address').waitFor({ timeout: 45_000 });
+    // `market-status` rather than `market-shown-address`: the address renders the moment the view
+    // mounts, the status only once the contract has been read. Waiting on the first and then
+    // reading the second is a race that loses on a cold service worker — which is how CI found it.
+    await popup.getByTestId('market-status').waitFor({ timeout: 45_000 });
     assert.equal((await popup.getByTestId('market-status').innerText()).trim(), 'resolved');
     assert.match(await popup.getByTestId('market-outcome').innerText(), /Resolved YES/);
     assert.match(await popup.getByTestId('my-payout').innerText(), /^1 EMBER$/);
@@ -378,7 +390,10 @@ describe('Foresight: a position that survives the platform', () => {
 
     // And a second claim is refused by name rather than by a revert the user paid for.
     await popup.getByTestId('claim-done').click();
-    await popup.getByTestId('market-shown-address').waitFor({ timeout: 45_000 });
+    // `market-status` rather than `market-shown-address`: the address renders the moment the view
+    // mounts, the status only once the contract has been read. Waiting on the first and then
+    // reading the second is a race that loses on a cold service worker — which is how CI found it.
+    await popup.getByTestId('market-status').waitFor({ timeout: 45_000 });
     assert.match(await popup.getByTestId('claim-refusal').innerText(), /already claimed/);
     assert.equal(await popup.getByTestId('claim-submit').count(), 0, 'the claim button is still offered after claiming');
     await popup.close();
