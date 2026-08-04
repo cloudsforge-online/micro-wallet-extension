@@ -245,13 +245,30 @@ async function remember(address: string, label: unknown, source: string): Promis
   return next;
 }
 
-export async function watchMarket(payload: Record<string, unknown>): Promise<WatchedMarket[]> {
+export interface WatchResult {
+  readonly markets: readonly WatchedMarket[];
+  /**
+   * The market as it was read while validating the address.
+   *
+   * RETURNED SO THE SCREEN DOES NOT READ IT TWICE. Opening a market used to cost two full reads —
+   * one here to check the address is really a market, one from the view that opens immediately
+   * afterwards — and on a node mining at HEARTH_THROTTLE=0.9 that doubled a wait already measured
+   * at 31 seconds, which is how it came to exceed a 45-second bound in CI. The validating read is
+   * the one the screen wants; handing it over is both faster and one fewer chance for the two reads
+   * to disagree.
+   */
+  readonly observation: MarketObservation;
+}
+
+export async function watchMarket(payload: Record<string, unknown>): Promise<WatchResult> {
   const address = requireAddress(payload['address'], 'The market address');
   const chain = await selectedChain();
   // Read it before remembering it. A typo saved into the list is a row that fails every time it is
-  // opened, and the user has no way to tell that from a market that has gone away.
-  const observation = await readMarket(chain, address, null);
-  return remember(observation.address, payload['label'], typeof payload['source'] === 'string' ? payload['source'] : 'pasted');
+  // opened, and the user has no way to tell that from a market that has gone away. The viewer is
+  // included so this read is the one the screen can use rather than a weaker version of it.
+  const observation = await readMarket(chain, address, await viewingAccount());
+  const markets = await remember(observation.address, payload['label'], typeof payload['source'] === 'string' ? payload['source'] : 'pasted');
+  return { markets, observation };
 }
 
 export async function unwatchMarket(payload: Record<string, unknown>): Promise<WatchedMarket[]> {

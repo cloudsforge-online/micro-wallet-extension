@@ -45,12 +45,16 @@ interface StakePlan {
   refusal: string | null;
 }
 interface ClaimPlan { observation: MarketObservation; tx: TransactionPreview | null; refusal: string | null }
+interface WatchResult { markets: WatchedMarket[]; observation: MarketObservation }
 
 const errorText = (cause: unknown): string => (cause instanceof Error ? cause.message : String(cause));
 
 export function Markets(props: { chain: WalletState['chains'][number]; address: string }): React.JSX.Element {
   const [watched, setWatched] = useState<WatchedMarket[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
+  // The observation the worker already made while validating a pasted address, handed to the
+  // market view so opening a market costs one read rather than two.
+  const [opened, setOpened] = useState<MarketObservation | null>(null);
   const [paste, setPaste] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -69,14 +73,27 @@ export function Markets(props: { chain: WalletState['chains'][number]; address: 
   }, []);
 
   if (selected !== null) {
-    return <Market address={selected} chain={props.chain} viewer={props.address} onBack={() => { setSelected(null); void reload(); }} />;
+    return (
+      <Market
+        address={selected}
+        chain={props.chain}
+        viewer={props.address}
+        initial={opened !== null && opened.address.toLowerCase() === selected.toLowerCase() ? opened : null}
+        onBack={() => { setSelected(null); setOpened(null); void reload(); }}
+      />
+    );
   }
 
   const add = (address: string, label: string, source: string): void => {
     setBusy(true);
     setError(null);
-    void call<WatchedMarket[]>('watchMarket', { address, label, source })
-      .then((list) => { setWatched(list); setPaste(''); setSelected(address); })
+    void call<WatchResult>('watchMarket', { address, label, source })
+      .then((result) => {
+        setWatched(result.markets);
+        setPaste('');
+        setOpened(result.observation);
+        setSelected(result.observation.address);
+      })
       .catch((cause: unknown) => setError(errorText(cause)))
       .finally(() => setBusy(false));
   };
@@ -178,12 +195,19 @@ export function Markets(props: { chain: WalletState['chains'][number]; address: 
 
 /* ------------------------------------------------------------------------------- one market --- */
 
-function Market(props: { address: string; chain: WalletState['chains'][number]; viewer: string; onBack: () => void }): React.JSX.Element {
-  const [observation, setObservation] = useState<MarketObservation | null>(null);
+function Market(props: {
+  address: string; chain: WalletState['chains'][number]; viewer: string;
+  initial: MarketObservation | null; onBack: () => void;
+}): React.JSX.Element {
+  const [observation, setObservation] = useState<MarketObservation | null>(props.initial);
   const [error, setError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
+    // `tick === 0` and an observation already in hand means the worker read this market a moment
+    // ago while validating the address. Reading it again immediately would show the same numbers
+    // from a block one or two later, at the cost of doubling the wait on a slow node.
+    if (tick === 0 && props.initial !== null) return undefined;
     let live = true;
     setObservation(null);
     setError(null);
