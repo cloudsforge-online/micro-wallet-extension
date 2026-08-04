@@ -83,15 +83,33 @@ export async function requireLiveChain(): Promise<{ chainId: number; blockNumber
   return { chainId, blockNumber };
 }
 
-/** An address with a non-zero balance on the live chain: the miner of a recent block. */
-export async function findFundedAddress(): Promise<{ address: string; wei: bigint }> {
+/**
+ * An address with a non-zero balance on the live chain: the miner of a recent block.
+ *
+ * RETURNS THE BLOCK IT READ AT, and the caller must read at the same one.
+ *
+ * `latest` is a moving target on a chain that is being mined — which is the whole point of using a
+ * live chain, and it is also a race. The first version of this compared the witness's `latest`
+ * against the extension's `latest` a second later; on a laptop the local testnet was slow enough
+ * that they always agreed, and in CI, where a fresh node mines every two seconds, a block landed
+ * between the two reads and credited the same coinbase. The test failed with two balances that were
+ * both correct.
+ *
+ * Pinning the block makes the comparison exact without weakening it: it is still a real balance,
+ * still read from a real node over TCP, still mined by a real miner. It is simply the SAME real
+ * balance on both sides of the assertion.
+ */
+export async function findFundedAddress(): Promise<{ address: string; wei: bigint; blockTag: string }> {
   const tip = Number(BigInt(String(await nodeRpc('eth_blockNumber'))));
   for (let n = tip; n >= Math.max(0, tip - 50); n -= 1) {
     const block = await nodeRpc('eth_getBlockByNumber', [`0x${n.toString(16)}`, false]) as { miner?: string } | null;
     const miner = block?.miner;
     if (typeof miner !== 'string') continue;
-    const wei = BigInt(String(await nodeRpc('eth_getBalance', [miner, 'latest'])));
-    if (wei > 0n) return { address: miner, wei };
+    // One block behind the tip, so a reorg of the very newest block cannot change the answer under
+    // the test either.
+    const blockTag = `0x${Math.max(0, n - 1).toString(16)}`;
+    const wei = BigInt(String(await nodeRpc('eth_getBalance', [miner, blockTag])));
+    if (wei > 0n) return { address: miner, wei, blockTag };
   }
   throw new Error('No address with a non-zero balance was found in the last 50 blocks — has this chain ever mined?');
 }

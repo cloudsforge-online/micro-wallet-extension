@@ -88,22 +88,25 @@ describe('the wallet, in a real browser, against the live chain', () => {
     assert.ok(funded.wei > 0n, 'the funded address the test found holds nothing');
 
     const worker = await harness.worker();
-    const throughExtension = await worker.evaluate(async (address: string) => {
+    const throughExtension = await worker.evaluate(async ([address, blockTag]: [string, string]) => {
       // Runs INSIDE the service worker: chrome.runtime.sendMessage to itself is not available, so
       // this drives the same JSON-RPC the wallet uses, from the worker's own origin and under the
       // extension's own host permissions. A CORS failure or a missing permission fails here.
+      //
+      // The block is pinned rather than `latest` — see findFundedAddress. The chain is being mined
+      // while this runs, so `latest` here and `latest` in the witness are two different blocks.
       const response = await fetch('http://127.0.0.1:8545', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, 'latest'] }),
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_getBalance', params: [address, blockTag] }),
       });
       const payload = await response.json() as { result: string };
       return payload.result;
-    }, funded.address);
+    }, [funded.address, funded.blockTag] as [string, string]);
 
     assert.equal(BigInt(throughExtension), funded.wei);
     const ember = Number(funded.wei / 10n ** 14n) / 10_000;
-    console.log(`    LIVE BALANCE: ${funded.address} holds ${funded.wei} wei (${ember} EMBER) on chain ${CHAIN_ID}`);
+    console.log(`    LIVE BALANCE: ${funded.address} holds ${funded.wei} wei (${ember} EMBER) at block ${Number(BigInt(funded.blockTag))} on chain ${CHAIN_ID}`);
   });
 
   test('the receive screen shows the checksummed address and a QR of it', async () => {
