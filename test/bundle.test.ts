@@ -15,6 +15,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import test, { before, describe } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { BUILTIN_CHAINS } from '../src/background/storage.ts';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const CHROME = join(REPO, 'dist', 'chrome');
@@ -93,6 +94,48 @@ describe('the shipped package', () => {
     // user's local documents for no benefit.
     for (const script of manifest.content_scripts) {
       for (const match of script.matches) assert.ok(!match.startsWith('file://'), `a content script matches ${match}`);
+    }
+  });
+
+  test('every chain the wallet ships with is one the manifest lets it reach', () => {
+    /* THE MANIFEST AND `BUILTIN_CHAINS` ARE ONE FACT KEPT IN TWO FILES, and this is the check that
+     * they still agree. Under MV3 a `fetch` to a host outside `host_permissions` is refused by the
+     * browser, not by the network — the worker sees a generic TypeError, `rpc.ts:45` renders it as
+     * "Could not reach Hearth", and nothing anywhere names the permission as the cause.
+     *
+     * It fired the moment it was written: the manifests asked for `rpc.hearth.cloudsforge.online`,
+     * a host the tunnel does not serve and no shipped chain uses. Both directions are asserted,
+     * because each catches a different mistake — a chain with no permission cannot be reached, and
+     * a permission with no chain is either dead weight or a rename that only half happened.
+     */
+    const loopback = new Set(['127.0.0.1', 'localhost']);
+    const host = (pattern: string): { scheme: string; host: string } | null => {
+      const m = /^(https?):\/\/([^/*]+)\/\*$/.exec(pattern);
+      return m === null ? null : { scheme: m[1] ?? '', host: m[2] ?? '' };
+    };
+
+    for (const target of [CHROME, FIREFOX]) {
+      const manifest = JSON.parse(read(target, 'manifest.json')) as { host_permissions: string[] };
+      const permitted = manifest.host_permissions.map(host).filter((p) => p !== null);
+
+      for (const chain of BUILTIN_CHAINS) {
+        const url = new URL(chain.rpcUrl);
+        const scheme = url.protocol.slice(0, -1);
+        assert.ok(
+          permitted.some((p) => p.scheme === scheme && p.host === url.hostname),
+          `${target}: chain ${chain.id} (${chain.name}) talks to ${url.origin}, which host_permissions does not cover — every request to it is blocked before it leaves the browser`,
+        );
+      }
+
+      // Loopback is exempt in the other direction: it is there for §5's custom RPC and for a
+      // developer's own node, neither of which is a shipped chain.
+      for (const p of permitted) {
+        if (loopback.has(p.host)) continue;
+        assert.ok(
+          BUILTIN_CHAINS.some((c) => new URL(c.rpcUrl).hostname === p.host),
+          `${target}: host_permissions asks for ${p.host}, which no shipped chain uses`,
+        );
+      }
     }
   });
 

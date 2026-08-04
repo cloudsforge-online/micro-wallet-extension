@@ -162,6 +162,30 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
 });
 
 /**
+ * The two apexes the platform is deployed under — **the only hostnames written down in this
+ * repository**, and the reason there are no others.
+ *
+ * Mainnet and testnet run side by side on one host, fronted by one Cloudflare tunnel, and every
+ * surface is `<service>.<apex>`. That is not a convention this file invented; it is what the
+ * tunnel actually serves, host by host, in `micro-deploy/cloudflared/config.mainnet.public.yml`
+ * and `config.testnet.public.yml` — `rpc` at line 128 of each, `explorer` at line 76.
+ *
+ * They are derived rather than typed out because the pair is what goes wrong. A wallet whose RPC
+ * says one environment and whose explorer says the other shows a user a balance from one chain
+ * and a transaction history from the other, and neither screen says which. Deriving both from one
+ * apex makes that particular mismatch unwritable.
+ */
+const APEX = Object.freeze({
+  mainnet: 'cloudsforge.online',
+  testnet: 'testnet.cloudsforge.online',
+});
+
+/** `https://<service>.<apex>`, which is the estate's whole rule for where a surface lives. */
+const surface = (service: string, apex: string): string => `https://${service}.${apex}`;
+
+const EMBER = { name: 'Ember', symbol: 'EMBER', decimals: 18 } as const;
+
+/**
  * The chains the wallet ships knowing about.
  *
  * The RPC URL for the testnet is the public one; a user pointing at their own node is §5's "custom
@@ -169,23 +193,39 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
  * from the core's chains.ts, where it is derived from three separate assertions in the node's own
  * source — it is a fact about Hearth v1, not a preference, and a fee editor that offered a
  * priority fee here would build a transaction the mempool refuses.
+ *
+ * TWO THINGS HERE WERE WRONG, and the comment above was the evidence for the second.
+ *
+ * 1. Mainnet asked for `rpc.hearth.cloudsforge.online`. **No tunnel serves that host** — the
+ *    mainnet ingress publishes `rpc.cloudsforge.online`, and a three-label `rpc.hearth.<apex>` is
+ *    not a name anything in `micro-deploy` produces. A shipped wallet would have failed to reach
+ *    mainnet at DNS, which surfaces to a user as "could not reach Hearth" with no cause.
+ *
+ * 2. Testnet was `http://127.0.0.1:8545` with no explorer, while the paragraph above said "the RPC
+ *    URL for the testnet is the public one". The prose was the intent and the value was a
+ *    developer's laptop; every installed wallet defaults to chain 7412 (`DEFAULT_SETTINGS`), so
+ *    the shipped default pointed at a node on the user's own machine that is not there.
+ *
+ * Local development did not need the loopback default and does not lose it: `HEARTH_RPC_URL`
+ * already redirects the extension in `test/e2e/harness.ts:324`, and a developer's own node is the
+ * same "custom RPC" path a user takes.
  */
 export const BUILTIN_CHAINS: readonly ChainRecord[] = Object.freeze([
   {
     id: 7411,
     name: 'Hearth',
-    rpcUrl: 'https://rpc.hearth.cloudsforge.online',
-    currency: { name: 'Ember', symbol: 'EMBER', decimals: 18 },
-    explorerUrl: 'https://explorer.cloudsforge.online',
+    rpcUrl: surface('rpc', APEX.mainnet),
+    currency: EMBER,
+    explorerUrl: surface('explorer', APEX.mainnet),
     supportsEip1559: false,
     addedByDapp: false,
   },
   {
     id: 7412,
     name: 'Hearth Testnet',
-    rpcUrl: 'http://127.0.0.1:8545',
-    currency: { name: 'Ember', symbol: 'EMBER', decimals: 18 },
-    explorerUrl: null,
+    rpcUrl: surface('rpc', APEX.testnet),
+    currency: EMBER,
+    explorerUrl: surface('explorer', APEX.testnet),
     supportsEip1559: false,
     addedByDapp: false,
   },

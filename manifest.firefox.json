@@ -42,7 +42,8 @@
   "host_permissions": [
     "http://127.0.0.1/*",
     "http://localhost/*",
-    "https://rpc.hearth.cloudsforge.online/*"
+    "https://rpc.cloudsforge.online/*",
+    "https://rpc.testnet.cloudsforge.online/*"
   ],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
 
