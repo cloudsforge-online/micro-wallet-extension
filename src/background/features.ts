@@ -80,10 +80,11 @@ async function viewingAccount(): Promise<string | null> {
 async function signAndSend(
   tx: Record<string, unknown>,
   overrides: { gas: string | undefined; gasPrice: string | undefined },
+  observed?: MarketObservation,
 ): Promise<{ hash: string; raw: string; preview: TransactionPreview }> {
   await requireUnlocked();
   const chain = await selectedChain();
-  const preview = await previewTransaction('wallet', tx, chain);
+  const preview = await previewTransaction('wallet', tx, chain, observed);
   const signed = await signTx(preview.from, {
     type: 0,
     nonce: BigInt(preview.nonce),
@@ -146,12 +147,14 @@ export async function previewStake(payload: Record<string, unknown>): Promise<St
       : `This market closed at ${new Date(observation.closeTime * 1000).toISOString()}, and the chain’s clock at block ${observation.blockNumber} is already past it.`;
   }
 
+  // The observation is handed on rather than read again: one read, one block, one set of numbers
+  // behind both the projection and the confirmation.
   const tx = await previewTransaction('wallet', {
     from,
     to: address,
     value: `0x${amountWei.toString(16)}`,
     data: stakeCallData(outcome),
-  }, chain);
+  }, chain, observation);
 
   return { observation, projection, tx, refusal };
 }
@@ -183,7 +186,7 @@ export async function stake(payload: Record<string, unknown>): Promise<{ hash: s
     to: address,
     value: `0x${amountWei.toString(16)}`,
     data: stakeCallData(outcome),
-  }, { gas: optionalString(payload['gas']), gasPrice: optionalString(payload['gasPrice']) });
+  }, { gas: optionalString(payload['gas']), gasPrice: optionalString(payload['gasPrice']) }, observation);
 
   await remember(address, payload['label'], 'staked');
   return { hash: sent.hash, raw: sent.raw, observationBlock: observation.blockNumber };

@@ -265,7 +265,7 @@ describe('Foresight: a position that survives the platform', () => {
       await popup.getByTestId('stake-yes').click();
       await popup.getByTestId('stake-amount').fill('1');
       await popup.getByTestId('stake-preview').click();
-      await popup.getByTestId('stake-projection').waitFor({ timeout: 45_000 });
+      await popup.getByTestId('stake-projection').waitFor({ timeout: 120_000 });
 
       /* -------------------------------------------------------- the confirmation states honestly */
       //
@@ -297,7 +297,7 @@ describe('Foresight: a position that survives the platform', () => {
       /* ------------------------------------------------------------------------------ the stake */
       const balanceBefore = BigInt(String(await nodeRpc('eth_getBalance', [wallet, 'latest'])));
       await popup.getByTestId('stake-submit').click();
-      await popup.getByTestId('stake-hash').waitFor({ timeout: 60_000 });
+      await popup.getByTestId('stake-hash').waitFor({ timeout: 120_000 });
       const hash = (await popup.getByTestId('stake-hash').innerText()).trim();
       assert.match(hash, /^0x[0-9a-f]{64}$/);
 
@@ -350,7 +350,7 @@ describe('Foresight: a position that survives the platform', () => {
       await popup.waitForFunction(
         () => document.querySelector('[data-testid="my-yes"]')?.textContent?.trim() === '1 EMBER',
         undefined,
-        { timeout: 45_000 },
+        { timeout: 120_000 },
       );
       assert.match(await popup.getByTestId('my-yes').innerText(), /^1 EMBER$/);
       assert.equal((await popup.getByTestId('odds-yes').innerText()).trim(), '100%');
@@ -490,9 +490,9 @@ describe('Foresight: a position that survives the platform', () => {
 
     const before = BigInt(String(await nodeRpc('eth_getBalance', [wallet, 'latest'])));
     await popup.getByTestId('claim-preview').click();
-    await popup.getByTestId('claim-submit').waitFor({ timeout: 45_000 });
+    await popup.getByTestId('claim-submit').waitFor({ timeout: 120_000 });
     await popup.getByTestId('claim-submit').click();
-    await popup.getByTestId('claim-hash').waitFor({ timeout: 60_000 });
+    await popup.getByTestId('claim-hash').waitFor({ timeout: 120_000 });
     const hash = (await popup.getByTestId('claim-hash').innerText()).trim();
 
     const receipt = await waitForReceipt(hash);

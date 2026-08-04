@@ -108,7 +108,26 @@ function parseChainId(value: unknown): number {
 }
 
 /** Build the preview an approval window draws for a transaction, filling in what the dapp omitted. */
-export async function previewTransaction(origin: string, raw: Record<string, unknown>, chain: ChainRecord): Promise<TransactionPreview> {
+/**
+ * @param observed A market this caller has ALREADY read at a pinned block, if any.
+ *
+ * The wallet's own stake screen reads the market to build its projection and then calls this to
+ * build the transaction — and this function, seeing a `stake(uint8)`, would read the very same
+ * market a second time. That doubled the slowest screen in the wallet: measured against a node
+ * mining at HEARTH_THROTTLE=0.9 it was the difference between building a stake preview in time and
+ * exceeding a 45-second bound in CI. Passing the observation through means one read, and it also
+ * removes the possibility of the projection and the confirmation quoting two different blocks.
+ *
+ * The DAPP path passes nothing, because on that path nobody has read it yet — and there the read is
+ * the whole point: §5.1's "odds are read at signing time" is about the wallet checking the contract
+ * rather than believing the page.
+ */
+export async function previewTransaction(
+  origin: string,
+  raw: Record<string, unknown>,
+  chain: ChainRecord,
+  observed?: MarketObservation,
+): Promise<TransactionPreview> {
   void origin;
   const from = toChecksumAddress(requireString(raw['from'], 'from'));
   const to = raw['to'] == null ? null : toChecksumAddress(requireString(raw['to'], 'to'));
@@ -135,7 +154,15 @@ export async function previewTransaction(origin: string, raw: Record<string, unk
   if (to !== null && isForesightStake(data)) {
     try {
       const outcome = stakedOutcome(data);
-      const observation = await readMarket(chain, to, from);
+      // Reuse the caller's read when it is genuinely of THIS market for THIS account; otherwise go
+      // to the chain. Checking rather than trusting: a stale or mismatched observation on a
+      // confirmation screen is exactly the dishonesty this whole path exists to prevent.
+      const reusable = observed !== undefined
+        && observed.address.toLowerCase() === to.toLowerCase()
+        && observed.chainId === chain.id
+        && observed.viewer !== null
+        && observed.viewer.toLowerCase() === from.toLowerCase();
+      const observation = reusable ? observed : await readMarket(chain, to, from);
       foresight = { observation, projection: projectStake(observation, outcome, valueWei) };
       warnings.push(...foresightWarnings(observation, valueWei));
     } catch (cause) {
