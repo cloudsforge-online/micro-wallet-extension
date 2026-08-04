@@ -19,6 +19,19 @@ test('a balance beyond a double\'s precision is exact', () => {
   assert.notEqual(String(Number(wei) / 1e18), '12345678.901234567890123456');
 });
 
+test('a balance is exact IN THE FORM THE POPUP ACTUALLY USES', () => {
+  // The balance on screen is `formatUnits(wei, 18, 6)` — with a precision limit. An earlier version
+  // of this file only checked the unlimited form, so a deliberate mutation that routed the LIMITED
+  // form through `Number(value) / 1e18` was caught by exactly one assertion, and none of them was
+  // about a large balance. That is the gap the mutation found: the guard was on a code path the
+  // product does not take.
+  const wei = 12_345_678_901234567890123456n;
+  assert.equal(formatUnits(wei, 18, 6), '12,345,678.901234');
+  // The integer part must be exact no matter how many digits it has — this is the part a double
+  // silently rounds, and the part that is the user's money.
+  assert.equal(formatUnits(98_765_432_109_876_543_210n * 10n ** 18n, 18, 6), '98,765,432,109,876,543,210');
+});
+
 test('truncation goes down, never up', () => {
   // 0.999999999999999999 shown to 6 places must be 0.999999, not 1. A balance rounded up shows a
   // user money they do not have, and they find out when a send fails.
