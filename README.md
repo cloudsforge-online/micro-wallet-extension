@@ -7,6 +7,29 @@ source, two manifests, four listings.
 
 Design authority: [`ecosystem/25-wallet-clients.md`](https://github.com/cloudsforge-online/micro-docs/blob/main/ecosystem/25-wallet-clients.md)
 
+## The networks it connects to
+
+Measured 2026-08-05, from off the estate.
+
+| | Mainnet | Testnet |
+| --- | --- | --- |
+| JSON-RPC | `https://rpc.cloudsforge.online` | `https://rpc-testnet.cloudsforge.online` |
+| Chain id | **7411** — `0x1cf3` | **7412** — `0x1cf4` |
+| Explorer | `https://explorer.cloudsforge.online` | `https://explorer-testnet.cloudsforge.online` |
+| Faucet | none, deliberately | `https://network-testnet.cloudsforge.online/faucet` |
+
+Two things to keep straight:
+
+- **The two chain ids are distinct, and were briefly not.** They must never be equal: EIP-155 binds
+  a signature to the chain id, so one shared id makes every testnet transaction replayable on
+  mainnet and back. A wallet that reports `7412` for mainnet is reading a stale configuration.
+- **Testnet hostnames are single-label** — `<surface>-testnet.cloudsforge.online`. The
+  `<surface>.testnet.cloudsforge.online` form is dead: it fails TLS at Cloudflare's edge, because
+  the wildcard certificate covers exactly one label.
+
+EMBER has **18 decimals**. "Sparks" is a display denomination only — 1 spark is 10^-6 EMBER — and
+never a second asset code; the ticker is `EMBER` everywhere a code is required.
+
 ```
 pnpm install && pnpm check
 ```
