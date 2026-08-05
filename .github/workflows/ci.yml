@@ -62,6 +62,24 @@ jobs:
           repository: cloudsforge-online/micro-mint
           path: mint
 
+      # micro-wallet-assets, and it is NOT optional. micro-org#178.
+      #
+      # This checkout did not exist, so on every runner `tools/build.js` found no sibling asset
+      # directory, fell back to the placeholder lozenge and to tools/png.js's generated toolbar
+      # icons, printed a `::warning::` and went green. A warning in a green run is not a check. The
+      # build below now passes `--require-assets` and FAILS instead, so the only way a placeholder
+      # reaches a store listing is by deleting one of these two lines — which is a diff a reviewer
+      # sees. It is PUBLIC, so no secret is involved.
+      #
+      # Note this covers the MARK and the TOOLBAR ICONS only. The empty-state illustrations are
+      # committed under public/art/ because the popup loads them at runtime from the packaged
+      # extension; tools/sync-art.mjs is what copies them, and `pnpm sync-art:check` below proves
+      # the committed catalogue still matches.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-wallet-assets
+          path: wallet-assets
+
       # `package_json_file` IS REQUIRED because this job checks out SEVERAL repositories side by side,
       # so the workspace root — where the action looks by default — holds no package.json at all.
       # Left off, it fails with "No pnpm version is specified".
@@ -88,9 +106,18 @@ jobs:
           MINT_SRC: ${{ github.workspace }}/mint/src
         run: pnpm templates:check
 
-      # Both targets. `pnpm build:all` is what proves "one source, two manifests" is still true —
-      # test/bundle.test.ts then asserts the two builds' JavaScript is byte-identical.
-      - run: pnpm build:all
+      # The empty-state art. `src/art/catalogue.ts` is generated from public/art/MANIFEST.json, and
+      # a stale catalogue names pictures that are not in the package — the exact failure micro-org#175
+      # found in Tessera, where the tags were fine and the pictures 404'd. micro-org#177.
+      - name: The art catalogue still matches the manifest
+        working-directory: wallet-extension
+        run: pnpm sync-art:check
+
+      # Both targets. `pnpm build:all:strict` is what proves "one source, two manifests" is still
+      # true — test/bundle.test.ts then asserts the two builds' JavaScript is byte-identical — and
+      # `--require-assets` is what stops a placeholder mark shipping. See the micro-wallet-assets
+      # checkout above.
+      - run: pnpm build:all:strict
         working-directory: wallet-extension
 
       - run: pnpm test
@@ -98,15 +125,28 @@ jobs:
         env:
           MINT_SRC: ${{ github.workspace }}/mint/src
 
-      - name: Report what the icons came from
+      # This step used to run `node tools/build.js | grep -q PLACEHOLDER && echo "::warning::…"`.
+      # It was accurate — it warned on every run for months — and it changed nothing, because a
+      # warning does not fail a job and nobody reads a green one. micro-org#178.
+      #
+      # What replaces it is not a louder warning. `--require-assets` above already makes a fallback
+      # fatal; this asserts the positive, on the ARTEFACT rather than on the build's own stdout,
+      # which is the distinction that mattered in micro-org#175: the Tessera checks all passed
+      # because they inspected the tag rather than the picture.
+      - name: The shipped icons are the generated ones, and they decode
         working-directory: wallet-extension
         run: |
-          # Loud rather than silent: the build falls back to generated placeholders when
-          # micro-wallet-assets has not published the extension set yet, and a placeholder icon that
-          # nobody notices is a store rejection discovered at submission.
-          node tools/build.js | tee /dev/stderr | grep -q PLACEHOLDER \
-            && echo "::warning::shipping placeholder icons — micro-wallet-assets has no assets/extension/ yet" \
-            || echo "using generated assets from micro-wallet-assets"
+          set -euo pipefail
+          for t in chrome firefox; do
+            for s in 16 32 48 128; do
+              cmp -s "dist/$t/icons/icon-$s.png" "../wallet-assets/assets/extension/icons/icon-$s.png" \
+                || { echo "::error::dist/$t/icons/icon-$s.png is not micro-wallet-assets' file"; exit 1; }
+            done
+            echo "$t icons: $(du -b dist/$t/icons/icon-128.png | cut -f1) bytes for the 128"
+          done
+          # test/art.test.ts decodes the EIP-6963 icon out of the built inpage.js and the eight
+          # illustrations out of dist/, inflating the pixel data rather than reading a header.
+          node --import tsx --test test/art.test.ts
 
   browser:
     name: Real Chromium against a real Hearth node

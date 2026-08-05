@@ -34,7 +34,18 @@ if (target !== 'chrome' && target !== 'firefox') {
   throw new Error(`build: --target must be chrome or firefox, not ${target}. Opera and Edge take the Chrome build unchanged.`);
 }
 const dev = process.argv.includes('--dev');
-const out = join(root, 'dist', target);
+
+/**
+ * `--out=<dir>` builds somewhere other than `dist/<target>`.
+ *
+ * It exists because two test files need a real package to assert against and the build DELETES its
+ * output directory before writing it. `test/bundle.test.ts` builds `dist/` in a `before` hook, and
+ * node:test runs files concurrently — so `test/art.test.ts`, reading `dist/chrome/inpage.js` at the
+ * same moment, intermittently got ENOENT from a directory that was mid-rebuild. Racing on a shared
+ * output is a flake that would have been "fixed" by making one of the two suites weaker; this lets
+ * each own its own artefact instead.
+ */
+const out = (process.argv.find((a) => a.startsWith('--out=')) ?? '').split('=')[1] || join(root, 'dist', target);
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(join(out, 'icons'), { recursive: true });
@@ -54,28 +65,59 @@ mkdirSync(join(out, 'icons'), { recursive: true });
 // "a diffusion model asked for the same mark nine times returns nine different marks, and an app
 // whose icon changes between sizes looks broken."
 //
-// Two shapes are accepted because the asset repository produces the masters first and derives the
-// per-store sets afterwards: an already-derived extension mark if there is one, and the 1024 master
-// otherwise. Most specific first.
+// ── THIS LIST USED TO NAME TWO FILES THAT CANNOT EXIST, AND ONE THAT WAS WRONG. micro-org#178. ──
+//
+// It began `assets/extension/mark-light.svg`, `assets/mark/mark-light.svg`, on the authority of a
+// comment in src/inpage/index.ts claiming "§6 puts the real mark at assets/extension/mark-light.svg".
+// §6 (docs/ecosystem/25-wallet-clients.md:262-296) names no path and no format; its Mark row reads
+// only "The wallet mark, on light and dark, plus a monochrome cut for tray and favicon". And
+// micro-wallet-assets contains no SVG at all — `find wallet-assets -name '*.svg'` returns nothing,
+// because FLUX 2 Pro emits raster. Both entries were dead, and the list therefore fell through to
+// `assets/mark/plate-light-1024x1024.png`: a 1024x1024 plate, 100 kB, which became a 134,230-char
+// data URI compiled into inpage.js — the MAIN-world script injected into EVERY PAGE THE USER
+// VISITS. 98% of that file was one picture of a logo.
+//
+// EIP-6963 asks for a square data URI legible at list density; the asset set derives exactly that
+// at `assets/extension/icons/icon-128.png`, 4,852 bytes. PNG satisfies RFC 2397 as well as SVG
+// does, so nothing about the spec required the file that did not exist. The 1024 masters stay at
+// the end of the list as a genuine last resort for a checkout that has the mark but not the derived
+// extension set; a build that reaches them is heavy but correct, and --require-assets refuses it.
 const ASSET_PATHS = [
-  ['assets/extension/mark-light.svg', 'image/svg+xml'],
-  ['assets/extension/icon-128.png', 'image/png'],
-  ['assets/mark/mark-light.svg', 'image/svg+xml'],
+  ['assets/extension/icons/icon-128.png', 'image/png'],
   ['assets/mark/plate-light-1024x1024.png', 'image/png'],
   ['assets/mark/glyph-1024x1024.png', 'image/png'],
 ].map(([rel, mime]) => [resolve(root, '..', 'wallet-assets', rel), mime]);
+
+/**
+ * `--require-assets` turns every fallback below from a line on stdout into a failed build.
+ *
+ * CI passes it. A developer without a sibling ../wallet-assets checkout does not, and still gets a
+ * working unpacked extension with a lozenge in it. The point is that the placeholder can never
+ * reach a store listing without somebody deliberately removing this flag from the workflow — which
+ * is a diff a reviewer sees, unlike a `::warning::` in a green run, which is what shipped before.
+ */
+const requireAssets = process.argv.includes('--require-assets');
+const degraded = [];
 
 let icon = '';
 const foundMark = ASSET_PATHS.find(([p]) => existsSync(p));
 if (foundMark !== undefined) {
   icon = `data:${foundMark[1]};base64,${readFileSync(foundMark[0]).toString('base64')}`;
-  console.log(`  mark:    ${foundMark[0]}`);
+  console.log(`  mark:    ${foundMark[0]} (${icon.length.toLocaleString('en-GB')}-char data URI)`);
+  // Reaching a 1024 master is not a failure, but it is a hundred kilobytes on every page load and
+  // it means the derived extension set is missing. It is not allowed to pass silently either.
+  if (foundMark[0] !== ASSET_PATHS[0][0]) degraded.push(`the EIP-6963 icon came from a 1024 master (${foundMark[0]}), not assets/extension/icons/icon-128.png`);
 } else {
   console.log('  mark:    PLACEHOLDER — micro-wallet-assets has published no mark yet.');
   console.log('           The EIP-6963 icon falls back to the lozenge in src/inpage/index.ts.');
+  degraded.push('the EIP-6963 icon is the placeholder lozenge in src/inpage/index.ts');
 }
 
-const rasterDir = resolve(root, '..', 'wallet-assets', 'assets', 'extension');
+// `assets/extension/icons/`, not `assets/extension/`. The old path was one directory short of where
+// micro-wallet-assets actually derives these (MANIFEST.json: `extension/icon-16` … `icon-128` all
+// live under `assets/extension/icons/`), so `haveRaster` was never true and every build in the
+// repository's history shipped the generated placeholders from tools/png.js. micro-org#178.
+const rasterDir = resolve(root, '..', 'wallet-assets', 'assets', 'extension', 'icons');
 const sizes = [16, 32, 48, 128];
 const haveRaster = sizes.every((s) => existsSync(join(rasterDir, `icon-${s}.png`)));
 if (haveRaster) {
@@ -83,7 +125,15 @@ if (haveRaster) {
   console.log(`  icons:   ${rasterDir}`);
 } else {
   for (const size of sizes) writeFileSync(join(out, 'icons', `icon-${size}.png`), placeholderIcon(size));
-  console.log('  icons:   PLACEHOLDER — micro-wallet-assets has no assets/extension/icon-{16,32,48,128}.png yet.');
+  console.log(`  icons:   PLACEHOLDER — ${rasterDir} has no icon-{16,32,48,128}.png.`);
+  degraded.push('the toolbar icons are the generated placeholders from tools/png.js');
+}
+
+if (requireAssets && degraded.length > 0) {
+  throw new Error(
+    `build --require-assets: this build would ship placeholder art.\n  - ${degraded.join('\n  - ')}\n`
+    + '  Check out cloudsforge-online/micro-wallet-assets as a sibling directory (../wallet-assets).',
+  );
 }
 
 /* -------------------------------------------------------------------------------- the bundles - */
@@ -113,8 +163,10 @@ await Promise.all([
   build({ ...shared, entryPoints: [join(root, 'src/ui/main.tsx')], outfile: join(out, 'ui.js'), format: 'esm', platform: 'browser', jsx: 'automatic' }),
 ]);
 
+// `recursive` because public/ is no longer three flat HTML files: public/art/ holds the empty-state
+// illustrations and their MANIFEST.json, and cpSync throws EISDIR on a directory without it.
 for (const page of readdirSync(join(root, 'public'))) {
-  cpSync(join(root, 'public', page), join(out, page));
+  cpSync(join(root, 'public', page), join(out, page), { recursive: true });
 }
 
 /* -------------------------------------------------------------------------------- the manifest */

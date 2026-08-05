@@ -12,6 +12,7 @@ import { formatGwei, formatUnits, parseUnits, shortAddress } from '../shared/uni
 import { encodeQr, qrToSvg } from '../shared/qr.ts';
 import { Markets } from './Markets.tsx';
 import { Deploy } from './Deploy.tsx';
+import { EmptyState } from './EmptyState.tsx';
 
 type Tab = 'assets' | 'activity' | 'send' | 'receive' | 'markets' | 'deploy' | 'connections' | 'settings';
 
@@ -55,7 +56,7 @@ export function Popup(): React.JSX.Element {
   if (!state.unlocked) return <Locked onUnlocked={refresh} />;
 
   const account = state.accounts.find((a) => a.address === state.settings.selectedAddress) ?? state.accounts[0];
-  if (account === undefined) return <main><p>This wallet has no accounts.</p></main>;
+  if (account === undefined) return <main><EmptyState slug="no-accounts">This wallet has no accounts.</EmptyState></main>;
 
   /* ────────────────────────────────────────────────────────────────────────────────────────────
    * NO FALLBACK TO A CHAIN NOBODY SELECTED.
@@ -226,9 +227,9 @@ function Assets(props: { address: string; chain: WalletState['chains'][number]; 
       </div>
 
       <h2>Tokens</h2>
-      <div className="placeholder-asset">
+      <EmptyState slug="no-tokens">
         No tokens yet. Add one by contract address when this account holds an ERC-20.
-      </div>
+      </EmptyState>
     </div>
   );
 }
@@ -252,7 +253,7 @@ function Activity(props: { address: string; chain: WalletState['chains'][number]
   return (
     <div>
       {data.entries.length === 0 ? (
-        <div className="placeholder-asset">Nothing in the last {data.scannedTo - data.scannedFrom} blocks.</div>
+        <EmptyState slug="no-activity">Nothing in the last {data.scannedTo - data.scannedFrom} blocks.</EmptyState>
       ) : (
         <ul className="list">
           {data.entries.map((e) => (
@@ -395,7 +396,7 @@ function Receive(props: { address: string; chain: WalletState['chains'][number] 
 
 function Connections(props: { state: WalletState; onChanged: () => Promise<void> }): React.JSX.Element {
   if (props.state.permissions.length === 0) {
-    return <div className="placeholder-asset">No sites are connected to this wallet.</div>;
+    return <EmptyState slug="no-dapps">No sites are connected to this wallet.</EmptyState>;
   }
   return (
     <ul className="list">

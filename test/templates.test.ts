@@ -28,10 +28,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import test, { describe } from 'node:test';
 
-// tools/ is plain JavaScript with no declarations, so the shape is stated here. Importing the
-// generator rather than shelling out to it means the test compares against the SAME function the
-// committed file was produced by.
-// @ts-expect-error -- tools/templates.js is untyped ESM; the three bindings used are asserted below.
+// Importing the generator rather than shelling out to it means the test compares against the SAME
+// function the committed file was produced by.
+//
+// This import carried a `@ts-expect-error` reading "tools/templates.js is untyped ESM". It is no
+// longer suppressed: tsconfig.test.json turned on `allowJs` (for tools/sync-art.mjs, which
+// test/art.test.ts imports for the same reason), so tsc now INFERS these three bindings from the
+// generator's own source and a rename over there fails the type-check here rather than at runtime.
 import { MINT_GENERATED, OUTPUT, render } from '../tools/templates.js';
 import { ARTEFACTS, MINT_SOURCE_SHA256 } from '../src/background/templates.generated.ts';
 import {

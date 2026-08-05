@@ -37,10 +37,19 @@ import { DISCONNECTED, reviveProviderError } from '../shared/errors.ts';
 /* The toolbar mark as a data URI, which EIP-6963 requires (`icon` must be an RFC 2397 URI so a
  * dapp can render it without a network fetch that would leak which dapps a wallet's users visit).
  *
- * PLACEHOLDER. micro-wallet-assets is being generated in parallel and 25-wallet-clients.md §6 puts
- * the real mark at `assets/extension/mark-light.svg`. The build reads that file if the sibling
- * checkout has it and falls back to this ember lozenge otherwise — tools/build.js says so on
- * stdout when it falls back, so this is loud rather than forgotten. */
+ * A LAST RESORT, NO LONGER THE THING THAT SHIPS. micro-org#178.
+ *
+ * This comment used to read "PLACEHOLDER … 25-wallet-clients.md §6 puts the real mark at
+ * `assets/extension/mark-light.svg`". That citation was wrong: §6 (lines 262-296) names no path and
+ * no file format, and micro-wallet-assets contains no SVG at all — FLUX 2 Pro emits raster. The two
+ * `.svg` entries in tools/build.js were therefore unmatchable, and the real mark went unused while
+ * the build fell through to a 1024x1024 plate that compiled a 134 kB data URI into this file, which
+ * is injected into every page the user visits.
+ *
+ * The build now takes `assets/extension/icons/icon-128.png` — 128x128, 4,852 bytes, the size
+ * EIP-6963 wants, and a PNG data URI is as valid under RFC 2397 as an SVG one. `pnpm build
+ * --require-assets`, which CI passes, FAILS rather than reaching this constant, so the lozenge below
+ * can only be seen by a developer building without a sibling ../wallet-assets checkout. */
 const FALLBACK_ICON = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA5NiA5NiI+PHJlY3Qgd2lkdGg9Ijk2IiBoZWlnaHQ9Ijk2IiByeD0iMjAiIGZpbGw9IiMxNDExMTAiLz48cGF0aCBkPSJNNDggMjBjLTEwIDEyLTE4IDIwLTE4IDMwYTE4IDE4IDAgMCAwIDM2IDBjMC0xMC04LTE4LTE4LTMweiIgZmlsbD0iI2U4NjIyYyIvPjwvc3ZnPg==';
 
 declare const __WALLET_ICON__: string | undefined;

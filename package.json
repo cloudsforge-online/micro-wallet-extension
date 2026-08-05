@@ -20,14 +20,22 @@
     "build": "node tools/build.js",
     "build:firefox": "node tools/build.js --target=firefox",
     "build:all": "node tools/build.js && node tools/build.js --target=firefox",
+    "//build:all:strict": "What CI runs. `--require-assets` turns a fallback to placeholder art from a line on stdout into a failed build, so the lozenge and the generated toolbar icons can never reach a store listing (micro-org#178). `build:all` stays lenient because a developer with no sibling ../wallet-assets checkout should still get a working unpacked extension.",
+    "build:all:strict": "node tools/build.js --require-assets && node tools/build.js --target=firefox --require-assets",
     "package": "node tools/package.js",
     "test": "node --import tsx --test test/*.test.ts",
     "//test:e2e": "--test-concurrency=1 because each file launches its own Chromium with its own user-data directory and its own unpacked extension; run in parallel they contend for the same Hearth node's nonces and for the machine's memory. The timeout is generous because these tests wait on real block times, a real 600,000-iteration PBKDF2 unlock, and a real service-worker restart — none of which are worth making flaky to save a minute. 600s rather than 180s since phase 5, and the arithmetic matters: ForesightMarket refuses to resolve a market that is still open (:239) — the rule that stops a resolver staking on the answer it is about to write — so the claim test must wait for a real market to reach its close time. The window is 240 CHAIN seconds, and the chain clock runs at about 0.88x wall time on this estate, so waiting it out costs roughly 270s of wall time MINUS whatever the earlier tests already spent. The faster the machine, the longer that wait: on a slow node the stake test eats most of the window, on a fast one almost none of it. 600s covers the fast case with room, and a smaller number would have failed on fast machines while passing on slow ones — the worst way round.",
     "test:e2e": "node --import tsx --test --test-concurrency=1 --test-timeout=600000 test/e2e/*.test.ts",
+    "//sync-art": "Regenerates src/art/catalogue.ts from public/art/MANIFEST.json. `--import` first copies the PNGs and the manifest slice out of a sibling ../wallet-assets checkout; that is the step to re-run when micro-wallet-assets publishes a new empty-state set. test/art.test.ts asserts the committed catalogue is what this would write, and that every file still hashes to the sha256 micro-wallet-assets recorded.",
+    "sync-art": "node tools/sync-art.mjs",
+    "sync-art:import": "node tools/sync-art.mjs --import",
+    "sync-art:check": "node tools/sync-art.mjs --check",
+    "//prove:art": "Loads the built extension into a real Chromium and reads naturalWidth after img.decode(), plus the EIP-6963 icon a dapp actually receives. Not in `pnpm test` because it needs a browser binary; it needs no Hearth node, so unlike test:e2e it runs anywhere Chromium does.",
+    "prove:art": "node tools/prove-art.mjs dist/chrome",
     "templates": "node tools/templates.js",
     "//templates:check": "Fails when src/background/templates.generated.ts is not what micro-mint's committed artefacts produce. test/templates.test.ts asserts the same thing in-process; this is the form a human runs.",
     "templates:check": "node tools/templates.js --check",
-    "check": "pnpm typecheck && pnpm build:all && pnpm test"
+    "check": "pnpm typecheck && pnpm sync-art:check && pnpm build:all && pnpm test"
   },
   "dependencies": {
     "@cloudsforge/hearth-wallet-core": "link:../hearth-wallet-core",

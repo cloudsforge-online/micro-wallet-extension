@@ -6,7 +6,19 @@
     "types": ["node", "chrome"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "rewriteRelativeImportExtensions": true
+    "rewriteRelativeImportExtensions": true,
+
+    // The build tooling is JavaScript and stays JavaScript — `tools/build.js`, `tools/png.js`,
+    // `tools/sync-art.mjs`. `test/art.test.ts` imports the last of those, because the check worth
+    // having is that the COMMITTED `src/art/catalogue.ts` is byte-for-byte what the generator would
+    // write today; re-implementing the generator in the test would only prove the copy matches the
+    // copy. Without `allowJs` that import is TS7016, and the alternatives were a hand-maintained
+    // `.d.mts` that can go stale silently or an `any` cast that discards the checking entirely.
+    //
+    // `checkJs` stays off: this is the same position emberkin-web takes (its tsconfig.json says so
+    // at length) — type-check the TypeScript, let the build scripts be scripts.
+    "allowJs": true,
+    "checkJs": false
   },
   "include": ["test", "tools", "src"]
 }

@@ -182,8 +182,29 @@ label { display: block; font-size: 12px; color: var(--cf-muted); margin: 12px 0 
 
 .qr { width: 190px; height: 190px; background: #f5efe8; border-radius: var(--cf-radius); }
 
-.placeholder-asset {
-  display: flex; align-items: center; justify-content: center;
-  border: 1px dashed var(--cf-line); border-radius: var(--cf-radius);
+/* The empty states, and the illustration each one now carries.
+ *
+ * `.placeholder-asset` — a dashed box named after art that did not exist yet — is gone. The art
+ * exists (micro-wallet-assets `assets/empty/`), `src/art/index.ts` resolves it and
+ * `src/ui/EmptyState.tsx` renders it, so the box no longer has to look unfinished on purpose.
+ *
+ * THE WIDTH HERE IS LOAD-BEARING. `src/art/index.ts` exports DISPLAY_PX = 128 and puts it in the
+ * image's `sizes` attribute, which is how the browser decides whether to fetch the 384 or the 576.
+ * If this rule and that constant disagree the browser fetches the wrong file — the one failure mode
+ * of a responsive image that no screenshot shows. test/art.test.ts asserts the two agree. */
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  border: 1px solid var(--cf-line); border-radius: var(--cf-radius);
   color: var(--cf-muted); font-size: 11px; padding: 18px; text-align: center;
 }
+
+.empty-art {
+  width: 128px; height: 128px;
+  /* The illustrations are generated on their own dark ground rather than transparent (`alpha:
+     false` in the manifest), so they are given the panel's corner radius instead of being left as
+     a hard-edged square sitting inside a rounded box. */
+  border-radius: var(--cf-radius);
+  margin-bottom: 10px;
+}
+
+.empty-words { margin: 0; }
