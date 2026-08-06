@@ -549,7 +549,7 @@ export async function nonceOf(address: string): Promise<bigint> {
  * The hash is DERIVED from the signed bytes rather than taken from the node's answer, and then the
  * two are compared. A node that echoes a different hash from the one the bytes have is a node whose
  * answers cannot be used to poll for a receipt — micro-mint's `evmTxHash` exists for the same
- * reason (`mint/src/evm.ts:150`).
+ * reason (`mint/src/evm.ts`).
  */
 export async function operatorSend(
   signer: Signer,

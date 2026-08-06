@@ -43,7 +43,7 @@ async function serve(status: number, body: string): Promise<{ url: string; close
 
 /**
  * A response shaped exactly like micro-foresight's, with every number a wallet might be tempted to
- * believe. `foresight/src/server.ts:446` really does serve `pool` beside the market.
+ * believe. `foresight/src/server.ts` really does serve `pool` beside the market.
  */
 const RICH = JSON.stringify({
   markets: [

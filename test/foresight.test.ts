@@ -26,7 +26,7 @@ import { selectorOf } from '../src/shared/abi.ts';
 
 /* ------------------------------------------------------- the contract, transcribed separately -- */
 
-/** `feeAmount()` — ForesightMarket.sol:383. Taken from the LOSING pool only, which is why the
+/** `feeAmount()` — ForesightMarket.sol. Taken from the LOSING pool only, which is why the
  *  winning pool is not a parameter: a winner's principal is never charged. */
 function feeAmount(poolLose: bigint, feeBps: bigint): bigint {
   return (poolLose * feeBps) / 10_000n;
@@ -133,7 +133,7 @@ describe('the projection is the contract’s own arithmetic', () => {
   });
 
   test('a winner never receives less than they staked — the fee comes from the losing pool', () => {
-    // ForesightMarket.sol:383 makes this a promise rather than a coincidence: "a winner always
+    // ForesightMarket.sol makes this a promise rather than a coincidence: "a winner always
     // receives at least their own stake back, because the fee is charged against other people's
     // losses and never against their principal." A projection that took the fee off the top would
     // break it, and every winner would read the screen as a bug.

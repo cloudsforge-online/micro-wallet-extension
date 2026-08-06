@@ -326,7 +326,7 @@ export function templates(): { templates: TemplateView[]; mintSourceSha256: stri
  * Turn the form into a `TokenInput`.
  *
  * SUPPLY AND CAP ARRIVE AS WHOLE TOKENS AND LEAVE AS BASE UNITS. The constructor takes
- * `initialSupply_` in the token's smallest unit (`ForgeTokens.sol:38` mints exactly that number),
+ * `initialSupply_` in the token's smallest unit (`ForgeTokens.sol` mints exactly that number),
  * and a user typing "1000000" means a million tokens, not a millionth of one. `parseUnits` refuses
  * more fraction digits than the token has rather than truncating — a supply quietly rounded is a
  * supply that is not the one somebody asked for, and the confirmation screen shows BOTH figures so

@@ -100,7 +100,7 @@ describe('the shipped package', () => {
   test('every chain the wallet ships with is one the manifest lets it reach', () => {
     /* THE MANIFEST AND `BUILTIN_CHAINS` ARE ONE FACT KEPT IN TWO FILES, and this is the check that
      * they still agree. Under MV3 a `fetch` to a host outside `host_permissions` is refused by the
-     * browser, not by the network — the worker sees a generic TypeError, `rpc.ts:45` renders it as
+     * browser, not by the network — the worker sees a generic TypeError, `rpc.ts` renders it as
      * "Could not reach Hearth", and nothing anywhere names the permission as the cause.
      *
      * It fired the moment it was written: the manifests asked for `rpc.hearth.cloudsforge.online`,

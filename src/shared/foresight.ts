@@ -55,7 +55,7 @@ export const MARKET_SELECTORS: Readonly<Record<keyof typeof MARKET_SIGNATURES, s
   ) as Record<keyof typeof MARKET_SIGNATURES, string>,
 );
 
-/** `enum Status { Open, Resolved, Void }` — ForesightMarket.sol:49. */
+/** `enum Status { Open, Resolved, Void }` — ForesightMarket.sol. */
 export type MarketStatus = 'open' | 'resolved' | 'void';
 
 export const OUTCOME_YES = 0;

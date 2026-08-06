@@ -16,7 +16,7 @@
  * large amount of surface — arrays, tuples, dynamic nesting, the packed/standard distinction —
  * serving call sites that can be counted on two hands, and every unused branch of it would be
  * untested code sitting on the path where a wrong answer sends money to the wrong place.
- * micro-mint's own encoder says the same thing about the same problem (`mint/src/evm.ts:178-183`)
+ * micro-mint's own encoder says the same thing about the same problem (`mint/src/evm.ts`)
  * and supports five types; this one supports eight because it also reads values back.
  *
  * NO `Buffer`, NO `node:` ANYTHING. mint's encoder is Buffer-based because it runs in Node; this

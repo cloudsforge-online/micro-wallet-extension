@@ -77,7 +77,7 @@ function loadMintEncoder(): Promise<{
   }
 
   const keccakTo = `import { keccak256 } from ${JSON.stringify(pathToFileURL(join(MINT_SRC, 'keccak.ts')).href)}`;
-  // Copied verbatim from mint/src/chains.ts:110-115.
+  // Copied verbatim from mint/src/chains.ts.
   const chainTo = 'class ChainError extends Error {\n  constructor(message: string) {\n    super(message)\n    this.name = \'ChainError\'\n  }\n}';
 
   const shimmed = original.replace(keccakFrom, keccakTo).replace(chainFrom, chainTo);

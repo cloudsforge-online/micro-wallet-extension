@@ -5,11 +5,11 @@
  *
  * §5: "the templates come from micro-mint's catalogue so there is ONE AUDITED SET rather than two;
  * the signature is the user's, so the platform is not in the custody path of a contract the user
- * owns." `mint/src/catalogue.ts:33` is a closed union — `'fixed' | 'mintable' | 'foundry'` — and
+ * owns." `mint/src/catalogue.ts` is a closed union — `'fixed' | 'mintable' | 'foundry'` — and
  * the union below is that one. There is no fourth, this file compiles no Solidity, and the bytecode
  * lives in background/templates.generated.ts, copied verbatim by tools/templates.js.
  *
- * WHAT IS RESTATED HERE AND WHY THAT IS SAFE. mint's `constructorArgs` (`catalogue.ts:131`) cannot
+ * WHAT IS RESTATED HERE AND WHY THAT IS SAFE. mint's `constructorArgs` (`catalogue.ts`) cannot
  * be imported — it is `Buffer`-based and throws mint's own error class, and tools/build.js fails
  * the build over a Node built-in in the bundle. So the argument ORDER and the cap rule are written
  * out again, and test/templates.test.ts asserts them against the constructor input types copied out
@@ -21,10 +21,10 @@
 
 import type { AbiValue } from './abi.ts';
 
-/** `mint/src/catalogue.ts:20` — the features a customer may ask for. */
+/** `mint/src/catalogue.ts` — the features a customer may ask for. */
 export type Feature = 'mintable' | 'burnable' | 'pausable';
 
-/** `mint/src/catalogue.ts:33`. A closed union. Adding to it here without adding a contract to
+/** `mint/src/catalogue.ts`. A closed union. Adding to it here without adding a contract to
  * micro-mint would be exactly the second audited set §5 forbids. */
 export type Variant = 'fixed' | 'mintable' | 'foundry';
 
@@ -58,7 +58,7 @@ export const TEMPLATES: readonly Template[] = Object.freeze([
       + 'Nothing can ever mint more, freeze a holder or pause a transfer — including you. That is '
       + 'the strongest promise of the three and it cannot be taken back.',
     features: Object.freeze([]),
-    // `catalogue.ts:46` — "No owner at all, so a cap would be a promise nothing can enforce."
+    // `catalogue.ts` — "No owner at all, so a cap would be a promise nothing can enforce."
     cap: 'forbidden',
     lastArgName: 'recipient_',
   }),
@@ -99,7 +99,7 @@ export function templateFor(variant: Variant): Template {
 /**
  * An order no committed contract can build, and the FIELD that made it so.
  *
- * Carries `field` for the same reason mint's `UnbuildableOrderError` does (`catalogue.ts:78-88`):
+ * Carries `field` for the same reason mint's `UnbuildableOrderError` does (`catalogue.ts`):
  * "Your order is invalid" and "`cap` is the word that made this impossible" are not the same
  * answer, and only the second one can be put next to the input that caused it.
  */
@@ -141,7 +141,7 @@ export const MAX_SYMBOL_LENGTH = 11;
  * The constructor arguments for a template, in the order its constructor declares them.
  *
  * `(string name_, string symbol_, uint8 decimals_, uint256 initialSupply_, [uint256 cap_,] address
- * recipient_|owner_)` — mint's `constructorArgs` at `catalogue.ts:131`, with the cap present only
+ * recipient_|owner_)` — mint's `constructorArgs` at `catalogue.ts`, with the cap present only
  * for the variant that requires one.
  */
 export function constructorArgsFor(template: Template, input: TokenInput): readonly AbiValue[] {
@@ -161,7 +161,7 @@ export function constructorArgsFor(template: Template, input: TokenInput): reado
     throw new UnbuildableTokenError('owner', 'the owner must be an EVM address');
   }
   if (/^0x0{40}$/.test(input.owner)) {
-    // mint refuses this too (`evm.ts:82`): a token owned by the zero address is a token with no
+    // mint refuses this too (`evm.ts`): a token owned by the zero address is a token with no
     // owner and a supply nobody can ever move.
     throw new UnbuildableTokenError('owner', 'the zero address cannot hold this supply');
   }

@@ -207,7 +207,7 @@ const EMBER = { name: 'Ember', symbol: 'EMBER', decimals: 18 } as const;
  *    the shipped default pointed at a node on the user's own machine that is not there.
  *
  * Local development did not need the loopback default and does not lose it: `HEARTH_RPC_URL`
- * already redirects the extension in `test/e2e/harness.ts:324`, and a developer's own node is the
+ * already redirects the extension in `test/e2e/harness.ts`, and a developer's own node is the
  * same "custom RPC" path a user takes.
  */
 export const BUILTIN_CHAINS: readonly ChainRecord[] = Object.freeze([

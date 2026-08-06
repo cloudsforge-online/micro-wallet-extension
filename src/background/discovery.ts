@@ -11,7 +11,7 @@
  * So exactly two fields are taken from the API — the CONTRACT ADDRESS and the QUESTION TEXT — and
  * nothing else it says is ever shown or used. Not the pool, not the odds, not the status, not the
  * user's position, not the payout. Every one of those is available in the same response
- * (`foresight/src/server.ts:461` serves `pool` alongside the market), and every one of them is
+ * (`foresight/src/server.ts` serves `pool` alongside the market), and every one of them is
  * dropped on the floor here, because a number that came from a server is a number a server can be
  * wrong or dishonest about, and the contract will answer the same question for free.
  *

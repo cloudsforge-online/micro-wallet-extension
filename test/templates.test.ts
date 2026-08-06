@@ -13,7 +13,7 @@
  *   2. Every bytecode still hashes to the digest recorded beside it, so a corrupted copy is caught
  *      even in the shape of the file rather than only by a diff.
  *   3. The argument order src/shared/templates.ts builds matches the constructor's DECLARED types,
- *      position by position — mint's own invariant (`catalogue.ts:126`: "the order is load-bearing
+ *      position by position — mint's own invariant (`catalogue.ts`: "the order is load-bearing
  *      and unchecked by the compiler"), enforced here against mint's own ABI.
  *
  * IT FAILS WHEN MICRO-MINT IS ABSENT. It does not skip. A drift guard that goes green because the
@@ -106,7 +106,7 @@ describe('the committed artefacts are micro-mint’s, unaltered', () => {
 
 describe('the variants are micro-mint’s closed union and nothing more', () => {
   test('exactly three, named as mint names them', () => {
-    // `mint/src/catalogue.ts:33` — `'fixed' | 'mintable' | 'foundry'`. A fourth here would be the
+    // `mint/src/catalogue.ts` — `'fixed' | 'mintable' | 'foundry'`. A fourth here would be the
     // second audited set §5 forbids.
     assert.deepEqual(TEMPLATES.map((t) => t.variant), ['fixed', 'mintable', 'foundry']);
     assert.deepEqual(
@@ -124,7 +124,7 @@ describe('the variants are micro-mint’s closed union and nothing more', () => 
   });
 
   test('the features and cap rules match micro-mint’s, variant by variant', () => {
-    // Transcribed from `catalogue.ts:39-63`. A cap rule that drifted would be an order this wallet
+    // Transcribed from `catalogue.ts`. A cap rule that drifted would be an order this wallet
     // accepts and the chain reverts, after the fee has been spent.
     const expected = {
       fixed: { features: [] as string[], cap: 'forbidden' },
