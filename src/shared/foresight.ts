@@ -8,9 +8,9 @@
  * API entirely absent, and tested that way."
  *
  * Everything a user needs in order to SEE what they hold and to TAKE what they are owed is derived
- * here from public views on `ForesightMarket.sol` — `stakeOf` (:352), `payoutOf` (:405), `oddsBps`
- * (:362), `total`, `distributable`, `claimableFrom` — plus two calls, `stake(uint8)` (:197) and
- * `claim()` (:431), neither of which has an allowlist, an operator or a platform signature in it.
+ * here from public views on `ForesightMarket.sol` — `stakeOf`, `payoutOf`, `oddsBps`,
+ * `total`, `distributable`, `claimableFrom` — plus two calls, `stake(uint8)` and
+ * `claim()`, neither of which has an allowlist, an operator or a platform signature in it.
  * The one thing the chain cannot supply is DISCOVERY: which markets exist, and what each one asks
  * in words. That lives in background/discovery.ts, is off unless a user turns it on, and its
  * absence costs a user a paste of an address and nothing else.

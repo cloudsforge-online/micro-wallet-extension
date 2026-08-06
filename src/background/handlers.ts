@@ -214,7 +214,7 @@ function isForesightStake(data: string): boolean {
 function stakedOutcome(data: string): Outcome {
   const value = BigInt(`0x${data.slice(10)}`);
   if (value !== 0n && value !== 1n) {
-    // ForesightMarket reverts with BadOutcome above OUTCOME_NO (:201). Saying so here means the
+    // ForesightMarket reverts with BadOutcome above OUTCOME_NO. Saying so here means the
     // preview does not have to invent a name for outcome 7.
     throw new ProviderError(INVALID_PARAMS, `stake(${value}) — this market only has outcomes 0 (YES) and 1 (NO), and the contract reverts on anything else.`);
   }

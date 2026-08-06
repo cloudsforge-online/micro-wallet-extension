@@ -429,7 +429,7 @@ describe('Foresight: a position that survives the platform', () => {
 
   test('after the oracle resolves, the wallet claims — and the money arrives', async () => {
     // Wait for the contract's own clock to pass close. `oracleAct` refuses to resolve an open
-    // market (:239), which is the rule that stops a resolver staking on the answer.
+    // market, which is the rule that stops a resolver staking on the answer.
     // The budget is the window divided by the SLOWEST rate worth tolerating, not the window itself:
     // the chain clock runs behind wall time, so waiting `OPEN_FOR_SECONDS` of wall time is never
     // enough. 0.5x is half the measured 0.88x, which is generous without being unbounded.
