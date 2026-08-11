@@ -115,6 +115,38 @@ describe('the shipped chain records', () => {
     assert.equal(first?.name, 'Hearth');
   });
 
+  test('every shipped hostname is a SINGLE label under the apex, because the certificate is', () => {
+    /* THE CHECK THAT WAS MISSING, and the reason a dead hostname shipped.
+     *
+     * test/bundle.test.ts already asserted that `host_permissions` and `BUILTIN_CHAINS` name the
+     * same hosts. They did — they named the same WRONG host. Two files agreeing is not evidence
+     * that the name resolves, and `rpc.testnet.cloudsforge.online` was in both for as long as it
+     * was in either. Measured 2026-08-11: NXDOMAIN, on a zone whose Universal SSL certificate is
+     * `*.cloudsforge.online` and therefore covers exactly one label, so even a DNS record would
+     * have failed the handshake. The live name is `rpc-testnet.cloudsforge.online`.
+     *
+     * This asserts the SHAPE instead, which is a property of Cloudflare's certificate rather than
+     * of any particular service, so it catches the next surface added as well as these two.
+     */
+    for (const chain of BUILTIN_CHAINS) {
+      for (const [field, value] of [
+        ['rpcUrl', chain.rpcUrl],
+        ['explorerUrl', chain.explorerUrl],
+      ] as const) {
+        if (value === null) continue;
+        const { hostname } = new URL(value);
+        if (!hostname.endsWith('.cloudsforge.online')) continue;
+        const labels = hostname.slice(0, -'.cloudsforge.online'.length);
+        assert.ok(
+          !labels.includes('.'),
+          `chain ${chain.id} ${field} is ${hostname}: ${labels.split('.').length} labels under ` +
+            `the apex, but the wildcard certificate covers one. Use ` +
+            `${labels.replace(/\./g, '-')}.cloudsforge.online`,
+        );
+      }
+    }
+  });
+
   test('every shipped chain names its own currency, so nothing has to hardcode one', () => {
     // src/ui/Approval.tsx printed "EMBER" over every amount regardless of chain. The symbol now
     // travels on the transaction preview, and it can only do that if every record carries one.
