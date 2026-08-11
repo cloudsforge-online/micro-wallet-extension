@@ -162,26 +162,52 @@ export const DEFAULT_SETTINGS: Settings = Object.freeze({
 });
 
 /**
- * The two apexes the platform is deployed under — **the only hostnames written down in this
- * repository**, and the reason there are no others.
+ * The one apex the platform is deployed under, and the per-network suffix that distinguishes a
+ * surface on it — **the only hostnames written down in this repository**, and the reason there
+ * are no others.
  *
  * Mainnet and testnet run side by side on one host, fronted by one Cloudflare tunnel, and every
- * surface is `<service>.<apex>`. That is not a convention this file invented; it is what the
- * tunnel actually serves, host by host, in `micro-deploy/cloudflared/config.mainnet.public.yml`
- * and `config.testnet.public.yml` — `rpc` at line 128 of each, `explorer` at line 76.
+ * surface is `<service><suffix>.cloudsforge.online`. That is not a convention this file invented;
+ * it is what the tunnel actually serves, host by host, in
+ * `micro-deploy/cloudflared/config.mainnet.public.yml` and `config.testnet.public.yml`.
  *
  * They are derived rather than typed out because the pair is what goes wrong. A wallet whose RPC
  * says one environment and whose explorer says the other shows a user a balance from one chain
  * and a transaction history from the other, and neither screen says which. Deriving both from one
  * apex makes that particular mismatch unwritable.
+ *
+ * THE TESTNET SUFFIX IS A HYPHEN, NOT A DOT, AND THAT IS LOAD-BEARING. This map used to read
+ * `testnet: 'testnet.cloudsforge.online'`, which made every testnet surface a TWO-LABEL name:
+ * `rpc.testnet.cloudsforge.online`, `explorer.testnet.cloudsforge.online`. Cloudflare's Universal
+ * SSL certificate for this zone is `*.cloudsforge.online` — a wildcard that covers exactly ONE
+ * label — so a two-label name cannot complete a TLS handshake even if it resolves. These two in
+ * fact resolve to nothing at all: measured 2026-08-11, `rpc.testnet.cloudsforge.online` and
+ * `explorer.testnet.cloudsforge.online` both return NXDOMAIN, while
+ * `rpc-testnet.cloudsforge.online` answers `eth_chainId` with `0x1cf4` over a publicly trusted
+ * certificate.
+ *
+ * `DEFAULT_SETTINGS.selectedChainId` is 7412, so this was not a corner: every freshly installed
+ * wallet opened on a chain whose RPC URL did not resolve, and `rpc.ts` renders that as
+ * "Could not reach Hearth" without naming DNS. The README stated the single-label rule correctly
+ * the whole time; only the code disagreed with it.
  */
-const APEX = Object.freeze({
-  mainnet: 'cloudsforge.online',
-  testnet: 'testnet.cloudsforge.online',
+const APEX = 'cloudsforge.online';
+
+/**
+ * What is appended to a service name to select a network. Mainnet takes the bare name; testnet
+ * takes `-testnet`. Nothing here may contain a dot — see the note on `APEX`.
+ */
+const SUFFIX = Object.freeze({
+  mainnet: '',
+  testnet: '-testnet',
 });
 
-/** `https://<service>.<apex>`, which is the estate's whole rule for where a surface lives. */
-const surface = (service: string, apex: string): string => `https://${service}.${apex}`;
+/**
+ * `https://<service><suffix>.cloudsforge.online`, which is the estate's whole rule for where a
+ * surface lives.
+ */
+const surface = (service: string, suffix: string): string =>
+  `https://${service}${suffix}.${APEX}`;
 
 const EMBER = { name: 'Ember', symbol: 'EMBER', decimals: 18 } as const;
 
@@ -194,7 +220,7 @@ const EMBER = { name: 'Ember', symbol: 'EMBER', decimals: 18 } as const;
  * source — it is a fact about Hearth v1, not a preference, and a fee editor that offered a
  * priority fee here would build a transaction the mempool refuses.
  *
- * TWO THINGS HERE WERE WRONG, and the comment above was the evidence for the second.
+ * THREE THINGS HERE WERE WRONG, and the comment above was the evidence for the second.
  *
  * 1. Mainnet asked for `rpc.hearth.cloudsforge.online`. **No tunnel serves that host** — the
  *    mainnet ingress publishes `rpc.cloudsforge.online`, and a three-label `rpc.hearth.<apex>` is
@@ -206,6 +232,14 @@ const EMBER = { name: 'Ember', symbol: 'EMBER', decimals: 18 } as const;
  *    developer's laptop; every installed wallet defaults to chain 7412 (`DEFAULT_SETTINGS`), so
  *    the shipped default pointed at a node on the user's own machine that is not there.
  *
+ * 3. Both testnet surfaces were TWO-LABEL names — `rpc.testnet.cloudsforge.online` and
+ *    `explorer.testnet.cloudsforge.online` — because `APEX.testnet` carried a dot. Neither
+ *    resolves: NXDOMAIN, measured 2026-08-11, and a wildcard certificate covering one label could
+ *    not have served them anyway. Fixing (2) moved the default off the developer's laptop and onto
+ *    a hostname that does not exist, which is the same failure wearing a different message. The
+ *    live names are `rpc-testnet.cloudsforge.online` (`eth_chainId` → `0x1cf4`) and
+ *    `explorer-testnet.cloudsforge.online` (HTTP 200), both measured the same day.
+ *
  * Local development did not need the loopback default and does not lose it: `HEARTH_RPC_URL`
  * already redirects the extension in `test/e2e/harness.ts`, and a developer's own node is the
  * same "custom RPC" path a user takes.
@@ -214,18 +248,18 @@ export const BUILTIN_CHAINS: readonly ChainRecord[] = Object.freeze([
   {
     id: 7411,
     name: 'Hearth',
-    rpcUrl: surface('rpc', APEX.mainnet),
+    rpcUrl: surface('rpc', SUFFIX.mainnet),
     currency: EMBER,
-    explorerUrl: surface('explorer', APEX.mainnet),
+    explorerUrl: surface('explorer', SUFFIX.mainnet),
     supportsEip1559: false,
     addedByDapp: false,
   },
   {
     id: 7412,
     name: 'Hearth Testnet',
-    rpcUrl: surface('rpc', APEX.testnet),
+    rpcUrl: surface('rpc', SUFFIX.testnet),
     currency: EMBER,
-    explorerUrl: surface('explorer', APEX.testnet),
+    explorerUrl: surface('explorer', SUFFIX.testnet),
     supportsEip1559: false,
     addedByDapp: false,
   },
