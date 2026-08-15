@@ -29,81 +29,16 @@
 
 import assert from 'node:assert/strict';
 import test, { after, before, describe } from 'node:test';
-import type { Page } from 'playwright-core';
-
 import {
-  PASSWORD, collectAnnouncements, createWallet, launch, markWorker, readWorkerMarker,
-  requireLiveChain, terminateWorker, type Harness,
+  PASSWORD, beginRequest, createWallet, launch, markWorker, openConnectedDapp,
+  readWorkerMarker, requireLiveChain, terminateWorker, waitForOutcome, withApproval,
+  type Harness,
 } from './harness.ts';
 
-const OURS = 'online.cloudsforge.wallet';
-
-/** Start a provider call in the page WITHOUT awaiting it, and hand back a handle to settle later. */
-async function beginRequest(page: Page, key: string, method: string, params: unknown[]): Promise<void> {
-  await page.evaluate(([k, m, p, rdns]: [string, string, unknown[], string]) => {
-    const providers = (window as unknown as { __providers: Record<string, { request(a: unknown): Promise<unknown> }> }).__providers;
-    const store = ((window as unknown as { __calls: Record<string, { done: boolean; result?: unknown; error?: { code: number; message: string } }> }).__calls ??= {});
-    store[k] = { done: false };
-    void providers[rdns]!.request({ method: m, params: p })
-      .then((result) => { store[k] = { done: true, result }; })
-      .catch((cause: { code?: number; message?: string }) => {
-        store[k] = { done: true, error: { code: cause.code ?? 0, message: cause.message ?? String(cause) } };
-      });
-  }, [key, method, params, OURS] as [string, string, unknown[], string]);
-}
-
-async function outcomeOf(page: Page, key: string): Promise<{ done: boolean; result?: unknown; error?: { code: number; message: string } }> {
-  return page.evaluate((k: string) =>
-    (window as unknown as { __calls: Record<string, { done: boolean; result?: unknown; error?: { code: number; message: string } }> }).__calls[k]!, key);
-}
-
-async function waitForOutcome(page: Page, key: string, timeoutMs = 60_000): Promise<{ result?: unknown; error?: { code: number; message: string } }> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const state = await outcomeOf(page, key);
-    if (state.done) return state;
-    if (Date.now() > deadline) {
-      // THIS IS THE FAILURE THIS FILE EXISTS TO CATCH. A promise that never settles is the MV3 bug.
-      throw new Error(`the dapp's ${key} promise never settled — it hung, which is exactly what §4.3 forbids`);
-    }
-    await new Promise((done) => setTimeout(done, 200));
-  }
-}
-
-/** Open the dapp with an EIP-6963 collector and resolve our provider onto the page. */
-async function openConnectedDapp(harness: Harness): Promise<Page> {
-  const page = await harness.context.newPage();
-  await collectAnnouncements(page);
-  await page.goto(harness.dappUrl, { waitUntil: 'domcontentloaded' });
-  await page.evaluate(async () => {
-    window.dispatchEvent(new Event('eip6963:requestProvider'));
-    await new Promise((done) => setTimeout(done, 300));
-  });
-  return page;
-}
-
-/**
- * Trigger a request and hand back the approval window it opens.
- *
- * SUBSCRIBES BEFORE IT TRIGGERS, and takes the page from the `page` event rather than scanning
- * `context.pages()`. Scanning was tried and it is subtly wrong: it returns the FIRST approval page
- * it finds, so one window left open by an earlier test is handed to the next one, which then drives
- * a request that has already been settled. The symptom is a missing button in a test that has
- * nothing to do with the bug, and it hid two genuine defects behind it.
- */
-async function withApproval(harness: Harness, trigger: () => Promise<void>, timeoutMs = 30_000): Promise<Page> {
-  const opening = harness.context.waitForEvent('page', {
-    predicate: (p) => p.url().includes('/approval.html#'),
-    timeout: timeoutMs,
-  });
-  await trigger();
-  const page = await opening;
-  await page.waitForLoadState('domcontentloaded');
-  // The window reports its own id to the worker on load (see background/index.ts `getRequest`), so
-  // waiting for the buttons also means waiting for that to have happened.
-  await page.getByTestId('reject').waitFor({ timeout: timeoutMs });
-  return page;
-}
+/* `beginRequest`, `outcomeOf`, `waitForOutcome`, `openConnectedDapp` and `withApproval` were written
+ * here and now live in the harness, because `exchange.test.ts` drives the same two-page dance —
+ * a request that cannot be awaited until the window it opens has been clicked. Their comments moved
+ * with them; each one records a failure that cost time. */
 
 describe('the service worker terminating does not lose a request', () => {
   let harness: Harness;

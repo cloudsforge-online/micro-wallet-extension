@@ -464,6 +464,99 @@ export async function collectAnnouncements(page: Page): Promise<void> {
   });
 }
 
+/* ------------------------------------------------------------------- driving a dapp's requests - */
+/*
+ * THE FOUR HELPERS BELOW ARE THE ONLY WAY A TEST MAKES THE EXTENSION SIGN SOMETHING.
+ *
+ * Everything a dapp asks of the wallet is EIP-1193 `provider.request(…)` — connect, sign, send — and
+ * everything the wallet asks back is a separate approval window. That is two pages and one promise
+ * that settles between them, so a test cannot simply `await` the call: the approval it is waiting to
+ * click has not opened yet. `beginRequest` starts the call without awaiting it and parks the outcome
+ * on the page; `withApproval` hands back the window it opened; `waitForOutcome` collects the result
+ * after the click.
+ *
+ * They started in `worker-restart.test.ts` and moved here when `exchange.test.ts` needed the same
+ * shape. Their comments are kept verbatim because each one records a failure that cost time.
+ */
+
+/** The wallet's own EIP-6963 identifier — the one a test picks out of everything a page announces. */
+export const OURS_RDNS = 'online.cloudsforge.wallet';
+
+export interface RequestOutcome {
+  readonly done: boolean;
+  readonly result?: unknown;
+  readonly error?: { code: number; message: string };
+}
+
+/** Start a provider call in the page WITHOUT awaiting it, and hand back a handle to settle later. */
+export async function beginRequest(page: Page, key: string, method: string, params: unknown[]): Promise<void> {
+  await page.evaluate(([k, m, p, rdns]: [string, string, unknown[], string]) => {
+    const providers = (window as unknown as { __providers: Record<string, { request(a: unknown): Promise<unknown> }> }).__providers;
+    const store = ((window as unknown as { __calls: Record<string, { done: boolean; result?: unknown; error?: { code: number; message: string } }> }).__calls ??= {});
+    store[k] = { done: false };
+    void providers[rdns]!.request({ method: m, params: p })
+      .then((result) => { store[k] = { done: true, result }; })
+      .catch((cause: { code?: number; message?: string }) => {
+        store[k] = { done: true, error: { code: cause.code ?? 0, message: cause.message ?? String(cause) } };
+      });
+  }, [key, method, params, OURS_RDNS] as [string, string, unknown[], string]);
+}
+
+export async function outcomeOf(page: Page, key: string): Promise<RequestOutcome> {
+  return page.evaluate((k: string) =>
+    (window as unknown as { __calls: Record<string, RequestOutcome> }).__calls[k]!, key);
+}
+
+export async function waitForOutcome(page: Page, key: string, timeoutMs = 60_000): Promise<RequestOutcome> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const state = await outcomeOf(page, key);
+    if (state.done) return state;
+    if (Date.now() > deadline) {
+      // THIS IS THE FAILURE worker-restart.test.ts EXISTS TO CATCH. A promise that never settles is
+      // the MV3 bug §4.3 forbids, and it presents identically here for any other reason a request
+      // gets dropped — so the message names the shape rather than the cause.
+      throw new Error(`the dapp's ${key} promise never settled — it hung, which is exactly what §4.3 forbids`);
+    }
+    await new Promise((done) => setTimeout(done, 200));
+  }
+}
+
+/** Open the dapp with an EIP-6963 collector and resolve our provider onto the page. */
+export async function openConnectedDapp(harness: Harness): Promise<Page> {
+  const page = await harness.context.newPage();
+  await collectAnnouncements(page);
+  await page.goto(harness.dappUrl, { waitUntil: 'domcontentloaded' });
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    await new Promise((done) => setTimeout(done, 300));
+  });
+  return page;
+}
+
+/**
+ * Trigger a request and hand back the approval window it opens.
+ *
+ * SUBSCRIBES BEFORE IT TRIGGERS, and takes the page from the `page` event rather than scanning
+ * `context.pages()`. Scanning was tried and it is subtly wrong: it returns the FIRST approval page
+ * it finds, so one window left open by an earlier test is handed to the next one, which then drives
+ * a request that has already been settled. The symptom is a missing button in a test that has
+ * nothing to do with the bug, and it hid two genuine defects behind it.
+ */
+export async function withApproval(harness: Harness, trigger: () => Promise<void>, timeoutMs = 30_000): Promise<Page> {
+  const opening = harness.context.waitForEvent('page', {
+    predicate: (p) => p.url().includes('/approval.html#'),
+    timeout: timeoutMs,
+  });
+  await trigger();
+  const page = await opening;
+  await page.waitForLoadState('domcontentloaded');
+  // The window reports its own id to the worker on load (see background/index.ts `getRequest`), so
+  // waiting for the buttons also means waiting for that to have happened.
+  await page.getByTestId('reject').waitFor({ timeout: timeoutMs });
+  return page;
+}
+
 /* ════════════════════════════════════════════════════════════════════════ the operator's side ═╗
  *
  * PHASES 5 AND 6 NEED A COUNTERPARTY, AND IT MUST NOT BE THE WALLET.
