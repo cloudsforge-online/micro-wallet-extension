@@ -187,6 +187,17 @@ jobs:
           repository: cloudsforge-online/micro-mint
           path: mint
 
+      # micro-deploy, for the two scripts that stand a Forge Exchange market up. test/e2e/
+      # exchange.test.ts trades against a REAL deployed AMM and refuses to invent one, so this job
+      # deploys one the same way the estate does — with the estate's own scripts, rather than a
+      # second implementation living here that could drift from it and pass anyway. It is PUBLIC,
+      # so no secret is involved, and the two scripts declare no dependencies of their own: they
+      # sign with `hearth/node/src/chain/transaction.js`, which is already checked out above.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-deploy
+          path: deploy
+
       - uses: pnpm/action-setup@v4
         with: { package_json_file: wallet-extension/package.json }
       - uses: actions/setup-node@v4
@@ -244,6 +255,72 @@ jobs:
           cat "$RUNNER_TEMP/hearth.log"
           exit 1
 
+      # ── a market to trade against ──────────────────────────────────────────────────────────────
+      #
+      # The exchange suite is an INTEGRATION test against a deployed AMM: a router, a factory,
+      # WEMBER, an ERC-20 and a pair with reserves in it. None of that can be stubbed — the whole
+      # subject is whether the wallet's calldata, gas estimate and signature satisfy contracts
+      # somebody else compiled — so the market is built here, on the throwaway chain above, out of
+      # the same sources the estate's own testnet market was built from.
+      #
+      # The compile is also a gate rather than a chore: `pnpm compile` recomputes the pair's CREATE2
+      # init code hash and refuses to finish if it no longer matches the constant `HearthV2Library`
+      # carries. A router that cannot find its own pairs would otherwise reach the wallet as an
+      # "execution reverted" with no cause attached.
+      - name: Compile the exchange contracts
+        working-directory: hearth/contracts
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm compile
+
+      # The pool's second asset is micro-mint's FixedSupplyToken — byte for byte the creation code
+      # every paid Forge Create order runs — rather than a throwaway ERC-20 written for the test.
+      # A pair is only worth testing against the asset type that will actually turn up in it.
+      - name: Take the pool's token from micro-mint's catalogue
+        run: node deploy/scripts/hearth-dex-token-artifact.mjs > hearth/contracts/out/FixedSupplyToken.json
+
+      # Hearth's genesis says "NO PREMINE", so the deployer is the coinbase and it has to mine what
+      # it is about to spend. The seeder wants its 20 EMBER of liquidity, its 1 EMBER test swap and
+      # a 50 EMBER gas reserve on top; 90 is that with room for the deployment's own gas.
+      - name: Wait until the coinbase can pay for a market
+        run: |
+          set -uo pipefail
+          coinbase=$(node -e 'process.stdout.write(require(process.env.RUNNER_TEMP + "/hearth-data/coinbase-key.json").address)')
+          echo "coinbase is $coinbase"
+          for i in $(seq 1 90); do
+            wei=$(curl -s -m 5 -X POST -H 'content-type: application/json' \
+              --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getBalance\",\"params\":[\"$coinbase\",\"latest\"]}" \
+              http://127.0.0.1:8545 | sed -n 's/.*"result":"\(0x[0-9a-f]*\)".*/\1/p') || true
+            ember=$(node -e 'process.stdout.write(String(BigInt(process.argv[1] || "0x0") / 10n ** 18n))' "${wei:-0x0}")
+            if [ "${ember:-0}" -ge 90 ]; then
+              echo "the coinbase holds $ember EMBER after ${i}0s"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::the chain never mined enough EMBER to seed a market"
+          tail -40 "$RUNNER_TEMP/hearth.log"
+          exit 1
+
+      # A tenth of the estate's testnet depth. The suite's assertions are all computed from
+      # `getReserves()` at a pinned block, so the arithmetic holds at any depth; a smaller pool is
+      # simply fewer blocks of waiting before the run can start.
+      - name: Deploy and seed a Forge Exchange market
+        env:
+          HEARTH_REPO: ${{ github.workspace }}/hearth
+          HEARTH_ARTIFACTS: ${{ github.workspace }}/hearth/contracts/out
+          CF_EMBER_NETWORK: testnet
+          EMBER_MINER_DATA: ${{ runner.temp }}/hearth-data
+          HEARTH_DEX_HOME: ${{ runner.temp }}/dex
+          EMBER_HOST_RPC: http://127.0.0.1:8545
+          HEARTH_DEX_SEED_EMBER: '20'
+          HEARTH_DEX_SEED_TOKEN: '1000'
+          HEARTH_DEX_SWAP_EMBER: '1'
+        run: |
+          mkdir -p "$RUNNER_TEMP/dex"
+          node deploy/scripts/hearth-dex-deploy.js
+          node deploy/scripts/hearth-dex-seed.js
+
       # `HEARTH_DATA` is how test/e2e/harness.ts finds the node's coinbase key. Phases 5 and 6 SPEND
       # — a stake is a payable call and a deployment costs gas — and Hearth's genesis says "NO
       # PREMINE" in terms, so the only funded account on any Hearth chain is a miner's coinbase.
@@ -256,6 +333,11 @@ jobs:
           HEARTH_DATA: ${{ runner.temp }}/hearth-data
           FORESIGHT_SRC: ${{ github.workspace }}/foresight/src
           MINT_SRC: ${{ github.workspace }}/mint/src
+          # Where the two steps above wrote deployment-7412.json and pool-7412.json. The exchange
+          # suite reads the market's addresses out of those files — the same files the estate's own
+          # operator reads — and throws if it cannot find them, so an unseeded chain fails the run
+          # rather than quietly skipping the only test that trades.
+          HEARTH_DEX_HOME: ${{ runner.temp }}/dex
         run: pnpm test:e2e
 
       - name: The node's log, whatever happened
